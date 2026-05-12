@@ -1,14 +1,24 @@
 {
-  "name": "hyperbruitage",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "serve": "python3 -m http.server 5173"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.3"
-  }
+    "name": "hyperbruitage",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vite --host 0.0.0.0",
+        "build": "pnpm typecheck && vite build",
+        "preview": "vite preview --host 0.0.0.0",
+        "format": "oxfmt --write .",
+        "format:check": "oxfmt --check .",
+        "lint": "oxlint",
+        "lint:fix": "oxlint --fix",
+        "typecheck": "tsc -p tsconfig.json --noEmit",
+        "check": "pnpm typecheck && pnpm lint && pnpm format:check"
+    },
+    "devDependencies": {
+        "oxfmt": "^0.49.0",
+        "oxlint": "^1.21.0",
+        "typescript": "^5.9.3",
+        "vite": "^7.2.7"
+    },
+    "packageManager": "pnpm@10.33.0"
 }

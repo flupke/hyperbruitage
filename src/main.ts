@@ -1,8 +1,8 @@
-import { AudioFX } from "./audio.js";
-import { GameplayScene } from "./gameplay.js";
-import { InputController } from "./input.js";
-import { IntroSequence } from "./intro.js";
-import { Renderer } from "./renderer.js";
+import { AudioFX } from "./audio";
+import { GameplayScene } from "./gameplay";
+import { InputController } from "./input";
+import { IntroSequence } from "./intro";
+import { Renderer } from "./renderer";
 
 const canvas = document.getElementById("game") as HTMLCanvasElement | null;
 const boot = document.getElementById("boot-screen");
@@ -17,8 +17,21 @@ const altitude = document.getElementById("altitude-label");
 const signal = document.getElementById("signal-label");
 const mission = document.getElementById("mission-text");
 
-if (!canvas || !boot || !startButton || !combatPrompt || !combatButton || !helmet || !radioMessage || !phase || !velocity || !altitude || !signal || !mission) {
-  throw new Error("Interface Hyperbruitage incomplete.");
+if (
+    !canvas ||
+    !boot ||
+    !startButton ||
+    !combatPrompt ||
+    !combatButton ||
+    !helmet ||
+    !radioMessage ||
+    !phase ||
+    !velocity ||
+    !altitude ||
+    !signal ||
+    !mission
+) {
+    throw new Error("Interface Hyperbruitage incomplete.");
 }
 
 const renderer = new Renderer(canvas);
@@ -32,32 +45,32 @@ type AppMode = "boot" | "intro" | "handoff" | "combat";
 let mode: AppMode = "boot";
 
 const frame = (now: number) => {
-  if (mode === "intro") {
-    intro.render(now);
-    if (intro.isComplete(now)) {
-      mode = "handoff";
-      gameplay.start(now);
-      combatPrompt.classList.add("active");
+    if (mode === "intro") {
+        intro.render(now);
+        if (intro.isComplete(now)) {
+            mode = "handoff";
+            gameplay.start(now);
+            combatPrompt.classList.add("active");
+        }
+    } else if (mode === "handoff" || mode === "combat") {
+        gameplay.render(now);
     }
-  } else if (mode === "handoff" || mode === "combat") {
-    gameplay.render(now);
-  }
-  requestAnimationFrame(frame);
+    requestAnimationFrame(frame);
 };
 
 const start = () => {
-  mode = "intro";
-  audio.start();
-  boot.classList.add("hidden");
-  intro.start(performance.now());
+    mode = "intro";
+    audio.start();
+    boot.classList.add("hidden");
+    intro.start(performance.now());
 };
 
 const enterCombat = () => {
-  mode = "combat";
-  combatPrompt.classList.remove("active");
-  audio.start();
-  gameplay.engage(performance.now());
-  input.requestPointerLock();
+    mode = "combat";
+    combatPrompt.classList.remove("active");
+    audio.start();
+    gameplay.engage(performance.now());
+    input.requestPointerLock();
 };
 
 startButton.addEventListener("click", start, { once: true });

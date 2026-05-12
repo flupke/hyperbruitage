@@ -1,52 +1,56 @@
 <!doctype html>
 <html lang="fr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hyperbruitage</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main id="game-shell">
-      <canvas id="game" aria-label="Hyperbruitage"></canvas>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Hyperbruitage</title>
+        <link rel="stylesheet" href="./styles.css" />
+    </head>
+    <body>
+        <main id="game-shell">
+            <canvas id="game" aria-label="Hyperbruitage"></canvas>
 
-      <section id="boot-screen" class="boot-screen">
-        <div class="boot-mark">HYPERBRUITAGE</div>
-        <button id="start-intro" class="primary-action" type="button">Lancer l'intro</button>
-      </section>
+            <section id="boot-screen" class="boot-screen">
+                <div class="boot-mark">HYPERBRUITAGE</div>
+                <button id="start-intro" class="primary-action" type="button">
+                    Lancer l'intro
+                </button>
+            </section>
 
-      <section id="combat-prompt" class="combat-prompt">
-        <button id="enter-combat" class="primary-action danger-action" type="button">Entrer en combat</button>
-      </section>
+            <section id="combat-prompt" class="combat-prompt">
+                <button id="enter-combat" class="primary-action danger-action" type="button">
+                    Entrer en combat
+                </button>
+            </section>
 
-      <div id="helmet-ui" class="helmet-ui" aria-hidden="true">
-        <div class="cockpit-frame top"></div>
-        <div class="cockpit-frame bottom"></div>
-        <div class="cockpit-frame left"></div>
-        <div class="cockpit-frame right"></div>
-        <div class="reticle"></div>
+            <div id="helmet-ui" class="helmet-ui" aria-hidden="true">
+                <div class="cockpit-frame top"></div>
+                <div class="cockpit-frame bottom"></div>
+                <div class="cockpit-frame left"></div>
+                <div class="cockpit-frame right"></div>
+                <div class="reticle"></div>
 
-        <div class="status-strip">
-          <span id="phase-label">ROUTE ORBITALE</span>
-          <span id="velocity-label">00.0 KM/S</span>
-          <span id="altitude-label">ORBIT</span>
-        </div>
+                <div class="status-strip">
+                    <span id="phase-label">ROUTE ORBITALE</span>
+                    <span id="velocity-label">00.0 KM/S</span>
+                    <span id="altitude-label">ORBIT</span>
+                </div>
 
-        <aside id="radio-panel" class="radio-panel">
-          <div class="radio-header">
-            <span>CANAL TERRE</span>
-            <span id="signal-label">SIGNAL 100%</span>
-          </div>
-          <p id="radio-message"></p>
-        </aside>
+                <aside id="radio-panel" class="radio-panel">
+                    <div class="radio-header">
+                        <span>CANAL TERRE</span>
+                        <span id="signal-label">SIGNAL 100%</span>
+                    </div>
+                    <p id="radio-message"></p>
+                </aside>
 
-        <div id="mission-card" class="mission-card">
-          <span>OBJECTIF</span>
-          <strong id="mission-text">Attendre transmission</strong>
-        </div>
-      </div>
-    </main>
+                <div id="mission-card" class="mission-card">
+                    <span>OBJECTIF</span>
+                    <strong id="mission-text">Attendre transmission</strong>
+                </div>
+            </div>
+        </main>
 
-    <script type="module" src="./dist/main.js"></script>
-  </body>
+        <script type="module" src="/src/main.ts"></script>
+    </body>
 </html>

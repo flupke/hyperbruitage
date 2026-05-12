@@ -1,0 +1,28 @@
+{
+    "$schema": "./node_modules/oxlint/configuration_schema.json",
+    "categories": {
+        "correctness": "error",
+        "perf": "warn",
+        "suspicious": "warn"
+    },
+    "env": {
+        "browser": true,
+        "es2020": true
+    },
+    "ignorePatterns": ["dist/**", "node_modules/**"],
+    "rules": {
+        "consistent-type-imports": "off",
+        "max-statements": "off",
+        "no-magic-numbers": "off",
+        "no-null": "off",
+        "no-ternary": "off",
+        "parameter-properties": "off",
+        "prefer-global-this": "off",
+        "sort-imports": "off",
+        "sort-keys": "off",
+        "typescript/consistent-type-imports": "off",
+        "typescript/parameter-properties": "off",
+        "unicorn/no-null": "off",
+        "unicorn/prefer-global-this": "off"
+    }
+}
