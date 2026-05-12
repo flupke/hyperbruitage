@@ -1,0 +1,345 @@
+:root {
+  color-scheme: dark;
+  --ink: #f7f1d5;
+  --muted: rgba(247, 241, 213, 0.66);
+  --amber: #ffb000;
+  --danger: #ff3158;
+  --cyan: #54e5ff;
+  --panel: rgba(10, 11, 14, 0.76);
+  --panel-strong: rgba(7, 8, 10, 0.92);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #030408;
+  font-family:
+    "Arial Narrow",
+    "Bahnschrift",
+    "Roboto Condensed",
+    system-ui,
+    sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+#game-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-height: 460px;
+  background: #030408;
+  isolation: isolate;
+}
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.boot-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 24px;
+  background:
+    linear-gradient(transparent 0 92%, rgba(255, 49, 88, 0.18) 92% 100%),
+    radial-gradient(circle at 50% 38%, rgba(255, 176, 0, 0.16), transparent 34%),
+    #030408;
+  background-size: auto, auto, 100% 4px;
+}
+
+.boot-screen.hidden {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 360ms ease;
+}
+
+.combat-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 52%, transparent 0 28%, rgba(0, 0, 0, 0.54) 70%);
+  transition: opacity 180ms ease;
+}
+
+.combat-prompt.active {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.boot-mark {
+  color: var(--ink);
+  font-size: clamp(2.6rem, 8vw, 7rem);
+  font-weight: 900;
+  line-height: 0.88;
+  text-transform: uppercase;
+  text-shadow:
+    4px 0 0 var(--danger),
+    -4px 0 0 rgba(84, 229, 255, 0.58),
+    0 12px 32px rgba(0, 0, 0, 0.82);
+}
+
+.primary-action {
+  min-width: 190px;
+  min-height: 48px;
+  padding: 0 22px;
+  border: 2px solid var(--ink);
+  border-radius: 3px;
+  color: #07080a;
+  background: var(--amber);
+  box-shadow: 7px 7px 0 #000;
+  cursor: pointer;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.primary-action:focus-visible {
+  outline: 3px solid var(--cyan);
+  outline-offset: 4px;
+}
+
+.danger-action {
+  color: var(--ink);
+  background: var(--danger);
+}
+
+.helmet-ui {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.helmet-ui.active {
+  opacity: 1;
+}
+
+.helmet-ui.alarm {
+  animation: alarm-pulse 420ms steps(2, jump-none) infinite;
+}
+
+.helmet-ui::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(255, 255, 255, 0.035) 0,
+      rgba(255, 255, 255, 0.035) 1px,
+      transparent 2px,
+      transparent 5px
+    ),
+    radial-gradient(circle at center, transparent 44%, rgba(0, 0, 0, 0.58) 100%);
+  mix-blend-mode: screen;
+}
+
+.cockpit-frame {
+  position: absolute;
+  z-index: 3;
+  background:
+    linear-gradient(90deg, transparent, rgba(255, 176, 0, 0.2), transparent),
+    var(--panel-strong);
+  border: 1px solid rgba(247, 241, 213, 0.12);
+}
+
+.cockpit-frame.top {
+  top: 0;
+  left: 12vw;
+  right: 12vw;
+  height: clamp(42px, 9vh, 92px);
+  clip-path: polygon(0 0, 100% 0, 91% 100%, 9% 100%);
+}
+
+.cockpit-frame.bottom {
+  left: 9vw;
+  right: 9vw;
+  bottom: 0;
+  height: clamp(72px, 14vh, 138px);
+  clip-path: polygon(7% 0, 93% 0, 100% 100%, 0 100%);
+}
+
+.cockpit-frame.left,
+.cockpit-frame.right {
+  top: 5vh;
+  bottom: 7vh;
+  width: clamp(46px, 8vw, 104px);
+}
+
+.cockpit-frame.left {
+  left: 0;
+  clip-path: polygon(0 0, 100% 13%, 70% 88%, 0 100%);
+}
+
+.cockpit-frame.right {
+  right: 0;
+  clip-path: polygon(0 13%, 100% 0, 100% 100%, 30% 88%);
+}
+
+.reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  width: 46px;
+  height: 46px;
+  border: 2px solid rgba(84, 229, 255, 0.52);
+  transform: translate(-50%, -50%);
+  clip-path: polygon(42% 0, 58% 0, 58% 40%, 100% 40%, 100% 60%, 58% 60%, 58% 100%, 42% 100%, 42% 60%, 0 60%, 0 40%, 42% 40%);
+}
+
+.status-strip {
+  position: absolute;
+  top: clamp(12px, 2.4vh, 24px);
+  left: 50%;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(82px, auto));
+  gap: 8px;
+  width: min(680px, calc(100vw - 176px));
+  transform: translateX(-50%);
+}
+
+.status-strip span,
+.radio-header,
+.mission-card span {
+  font-size: clamp(0.66rem, 1.6vw, 0.82rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.status-strip span {
+  min-height: 28px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--amber);
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--muted);
+}
+
+.radio-panel {
+  position: absolute;
+  right: clamp(14px, 3vw, 44px);
+  bottom: clamp(92px, 17vh, 160px);
+  z-index: 4;
+  width: min(440px, calc(100vw - 28px));
+  min-height: 132px;
+  padding: 14px 16px 16px;
+  border: 2px solid rgba(84, 229, 255, 0.5);
+  border-radius: 4px;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.72), 0 16px 48px rgba(0, 0, 0, 0.42);
+}
+
+.radio-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--cyan);
+}
+
+#radio-message {
+  min-height: 62px;
+  margin: 16px 0 0;
+  color: var(--ink);
+  font-size: clamp(1.05rem, 2vw, 1.34rem);
+  font-weight: 800;
+  line-height: 1.18;
+}
+
+#radio-message::after {
+  content: "_";
+  color: var(--amber);
+  animation: cursor-blink 600ms steps(2, jump-none) infinite;
+}
+
+.mission-card {
+  position: absolute;
+  left: clamp(14px, 3vw, 44px);
+  bottom: clamp(96px, 18vh, 168px);
+  z-index: 4;
+  display: grid;
+  gap: 8px;
+  width: min(330px, calc(100vw - 28px));
+  padding: 14px 16px;
+  border-left: 4px solid var(--danger);
+  border-radius: 4px;
+  background: var(--panel);
+}
+
+.mission-card span {
+  color: var(--danger);
+}
+
+.mission-card strong {
+  color: var(--ink);
+  font-size: clamp(1rem, 1.8vw, 1.22rem);
+  line-height: 1.12;
+  text-transform: uppercase;
+}
+
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes alarm-pulse {
+  50% {
+    filter: saturate(1.8) brightness(1.18);
+  }
+}
+
+@media (max-width: 720px) {
+  #game-shell {
+    min-height: 100vh;
+  }
+
+  .status-strip {
+    top: 10px;
+    width: calc(100vw - 112px);
+    grid-template-columns: 1fr;
+  }
+
+  .status-strip span {
+    min-height: 24px;
+    padding: 7px 9px;
+  }
+
+  .radio-panel,
+  .mission-card {
+    left: 14px;
+    right: 14px;
+    width: auto;
+  }
+
+  .radio-panel {
+    bottom: 86px;
+  }
+
+  .mission-card {
+    bottom: 224px;
+  }
+}
