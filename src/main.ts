@@ -44,13 +44,20 @@ const gameplay = new GameplayScene(renderer, hud, input, audio);
 type AppMode = "boot" | "intro" | "handoff" | "combat";
 let mode: AppMode = "boot";
 
+const completeIntro = (now: number) => {
+    if (mode !== "intro") {
+        return;
+    }
+    mode = "handoff";
+    gameplay.start(now);
+    combatPrompt.classList.add("active");
+};
+
 const frame = (now: number) => {
     if (mode === "intro") {
         intro.render(now);
         if (intro.isComplete(now)) {
-            mode = "handoff";
-            gameplay.start(now);
-            combatPrompt.classList.add("active");
+            completeIntro(now);
         }
     } else if (mode === "handoff" || mode === "combat") {
         gameplay.render(now);
@@ -75,6 +82,16 @@ const enterCombat = () => {
 
 startButton.addEventListener("click", start, { once: true });
 combatButton.addEventListener("click", enterCombat);
+window.addEventListener("keydown", (event) => {
+    if (
+        mode !== "intro" ||
+        (event.code !== "Escape" && event.code !== "Enter" && event.code !== "NumpadEnter")
+    ) {
+        return;
+    }
+    event.preventDefault();
+    completeIntro(performance.now());
+});
 window.addEventListener("resize", () => renderer.resize());
 renderer.resize();
 requestAnimationFrame(frame);
