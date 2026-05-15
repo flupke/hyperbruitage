@@ -1,4 +1,20 @@
 import { AudioFX } from "./audio";
+import {
+    CITY_BLOCK_SIZE,
+    CITY_SECTOR_SIZE,
+    STREET_HALF_WIDTH,
+    collectBuildings,
+    generateCitySector,
+    getSectorsAround,
+    getStreetWaypoint,
+    isLineBlockedByBuildings,
+    nearestStreetPoint,
+    resolveCircleAgainstBuildings,
+    sectorKey,
+    worldToSector,
+    type Building,
+    type CitySector,
+} from "./city";
 import { createBox, createPlane, createPyramid, createSphere } from "./geometry";
 import { InputController } from "./input";
 import {
@@ -41,11 +57,13 @@ interface Player {
 
 interface Enemy {
     position: Vec3;
+    waypoint: Vec3;
     health: number;
     radius: number;
     phase: number;
     cooldown: number;
     hitFlash: number;
+    pathTimer: number;
 }
 
 interface Beam {
@@ -91,9 +109,13 @@ const MAX_GRENADE_SPEED = 29;
 const GRENADE_GRAVITY = 12.8;
 const GRENADE_RADIUS = 0.34;
 const GRENADE_BLAST_RADIUS = 5.8;
-const ARENA_X = 18;
-const ARENA_Z_BACK = 5.5;
-const ARENA_Z_FRONT = -43;
+const PLAYER_RADIUS = 0.48;
+const ENEMY_RADIUS = 0.72;
+const ACTIVE_SECTOR_RADIUS = 2;
+const CITY_KEEP_RADIUS = ACTIVE_SECTOR_RADIUS + 1;
+const ENEMY_SPAWN_MIN_DISTANCE = 34;
+const ENEMY_SPAWN_MAX_DISTANCE = 78;
+const ENEMY_DESPAWN_DISTANCE = CITY_SECTOR_SIZE * 3.35;
 
 export class GameplayScene {
     private readonly box: Mesh;
@@ -107,6 +129,7 @@ export class GameplayScene {
     private readonly grenades: Grenade[] = [];
     private readonly explosions: Explosion[] = [];
     private readonly cacaParticles: CacaParticle[] = [];
+    private readonly citySectors = new Map<string, CitySector>();
     private readonly player: Player = {
         position: [0, 1.62, 3.3],
         yaw: 0,
@@ -120,8 +143,8 @@ export class GameplayScene {
     private shotCooldown = 0;
     private reloadTimer = 0;
     private damageFlash = 0;
-    private wave = 1;
-    private nextWaveTimer = 0;
+    private threatLevel = 1;
+    private spawnTimer = 0;
     private active = false;
     private radioLine = "Rampe ouverte. Les envahisseurs convergent vers ta position.";
 
@@ -143,8 +166,8 @@ export class GameplayScene {
         this.startedAt = now;
         this.lastFrame = now;
         this.active = false;
-        this.wave = 1;
-        this.nextWaveTimer = 0;
+        this.threatLevel = 1;
+        this.spawnTimer = 0.4;
         this.shotCooldown = 0;
         this.reloadTimer = 0;
         this.damageFlash = 0;
@@ -159,7 +182,11 @@ export class GameplayScene {
         this.grenades.length = 0;
         this.explosions.length = 0;
         this.cacaParticles.length = 0;
-        this.spawnWave();
+        this.citySectors.clear();
+        this.updateCitySectors();
+        for (let index = 0; index < 5; index += 1) {
+            this.spawnEnemy(0);
+        }
         this.hud.helmet.classList.add("active");
         this.hud.helmet.classList.remove("alarm");
         this.updateHud(0);
@@ -198,7 +225,7 @@ export class GameplayScene {
         const view = lookAt(eye, target, [0, 1, 0]);
         this.renderer.setCamera(projection, view, eye, [0.075, 0.06, 0.052], [-0.52, -0.42, -0.68]);
 
-        this.drawArena(time);
+        this.drawCity(time);
         this.drawEnemies(time);
         this.drawEffects(time);
         this.drawWeapon(time);
@@ -218,23 +245,14 @@ export class GameplayScene {
         const moveRight =
             Number(this.input.isDown("KeyD") || this.input.isDown("ArrowRight")) -
             Number(this.input.isDown("KeyA") || this.input.isDown("ArrowLeft"));
+        this.updateCitySectors();
+
         const movement = add(scale(forward, moveForward), scale(right, moveRight));
         const movementLength = length(movement);
         if (movementLength > 0.001) {
             const sprint = this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight");
             const speed = sprint ? 7.2 : 4.85;
-            this.player.position = add(
-                this.player.position,
-                scale(movement, (speed * dt) / movementLength),
-            );
-            this.player.position[0] = Math.max(
-                -ARENA_X,
-                Math.min(ARENA_X, this.player.position[0]),
-            );
-            this.player.position[2] = Math.max(
-                ARENA_Z_FRONT,
-                Math.min(ARENA_Z_BACK, this.player.position[2]),
-            );
+            this.movePlayer(scale(movement, (speed * dt) / movementLength));
         }
 
         this.shotCooldown = Math.max(0, this.shotCooldown - dt);
@@ -256,21 +274,13 @@ export class GameplayScene {
             this.fireGrenade(releasedCharge);
         }
 
+        this.threatLevel = 1 + Math.floor(time / 45) + Math.floor(this.player.kills / 8);
+        this.updateSpawning(dt, time);
         this.updateEnemies(dt, time);
         this.updateGrenades(dt);
+        this.removeDeadEnemies();
         this.updateEffects(dt);
         this.damageFlash = Math.max(0, this.damageFlash - dt * 2.6);
-
-        const aliveEnemies = this.enemies.filter((enemy) => enemy.health > 0).length;
-        if (aliveEnemies === 0) {
-            this.nextWaveTimer -= dt;
-            if (this.nextWaveTimer <= 0) {
-                this.wave += 1;
-                this.spawnWave();
-                this.radioLine = `Nouvelle vague detectee: niveau ${this.wave}.`;
-                this.audio.transmissionTick();
-            }
-        }
     }
 
     private fireGrenade(heldSeconds: number): void {
@@ -304,7 +314,11 @@ export class GameplayScene {
     }
 
     private updateEnemies(dt: number, time: number): void {
-        for (const enemy of this.enemies) {
+        const buildings = this.cityBuildings();
+        const playerStreet = nearestStreetPoint(this.player.position);
+
+        for (let index = this.enemies.length - 1; index >= 0; index -= 1) {
+            const enemy = this.enemies[index];
             if (enemy.health <= 0) {
                 continue;
             }
@@ -313,21 +327,50 @@ export class GameplayScene {
             const toPlayer = sub(this.player.position, enemy.position);
             const horizontal: Vec3 = [toPlayer[0], 0, toPlayer[2]];
             const distance = Math.max(0.001, length(horizontal));
-            const direction = scale(horizontal, 1 / distance);
-            const strafe: Vec3 = [-direction[2], 0, direction[0]];
-            const desiredDistance = 5.5 + Math.sin(enemy.phase) * 1.5;
-            const approach = distance > desiredDistance ? 1 : -0.45;
-            const speed = 1.1 + this.wave * 0.18;
-            enemy.position = add(enemy.position, scale(direction, approach * speed * dt));
-            enemy.position = add(
-                enemy.position,
-                scale(strafe, Math.sin(time * 1.7 + enemy.phase) * dt * 0.85),
+            if (distance > ENEMY_DESPAWN_DISTANCE) {
+                this.enemies.splice(index, 1);
+                continue;
+            }
+
+            const lineBlocked = isLineBlockedByBuildings(
+                add(enemy.position, [0, 0.08, 0]),
+                this.eyePosition(),
+                buildings,
+                0.32,
             );
+            enemy.pathTimer -= dt;
+
+            const desiredDistance = 5.5 + Math.sin(enemy.phase) * 1.5;
+            let direction: Vec3;
+            let speed = 1.25 + this.threatLevel * 0.14;
+            if (!lineBlocked && distance < 26) {
+                direction = scale(horizontal, 1 / distance);
+                const strafe: Vec3 = [-direction[2], 0, direction[0]];
+                const approach = distance > desiredDistance ? 1 : -0.42;
+                direction = normalize(
+                    add(direction, scale(strafe, Math.sin(time * 1.7 + enemy.phase) * 0.32)),
+                );
+                speed *= approach;
+                enemy.waypoint = playerStreet;
+            } else {
+                const waypointDistance = length(sub(enemy.waypoint, enemy.position));
+                if (enemy.pathTimer <= 0 || waypointDistance < 1.25) {
+                    enemy.waypoint = getStreetWaypoint(enemy.position, playerStreet);
+                    enemy.pathTimer = 0.35 + Math.random() * 0.24;
+                }
+                const toWaypoint = sub(enemy.waypoint, enemy.position);
+                const waypointLength = Math.max(0.001, length([toWaypoint[0], 0, toWaypoint[2]]));
+                direction = [toWaypoint[0] / waypointLength, 0, toWaypoint[2] / waypointLength];
+            }
+
+            const nextPosition = add(enemy.position, scale(direction, speed * dt));
+            enemy.position = resolveCircleAgainstBuildings(nextPosition, enemy.radius, buildings);
             enemy.position[1] = 1.45 + Math.sin(time * 2.4 + enemy.phase) * 0.24;
 
             enemy.cooldown -= dt;
-            if (enemy.cooldown <= 0 && distance < 24) {
-                enemy.cooldown = 1.25 + Math.random() * 1.35 - Math.min(0.45, this.wave * 0.04);
+            if (enemy.cooldown <= 0 && distance < 28 && !lineBlocked) {
+                enemy.cooldown =
+                    1.15 + Math.random() * 1.2 - Math.min(0.42, this.threatLevel * 0.035);
                 this.enemyFire(enemy);
             }
         }
@@ -346,7 +389,7 @@ export class GameplayScene {
             emissive: 2.2,
         });
 
-        const damage = 4 + Math.min(8, this.wave);
+        const damage = 4 + Math.min(8, this.threatLevel);
         this.player.health = Math.max(0, this.player.health - damage);
         this.damageFlash = 1;
         this.audio.playerHit();
@@ -356,6 +399,7 @@ export class GameplayScene {
     }
 
     private updateGrenades(dt: number): void {
+        const buildings = this.cityBuildings();
         for (let index = this.grenades.length - 1; index >= 0; index -= 1) {
             const grenade = this.grenades[index];
             grenade.age += dt;
@@ -365,10 +409,16 @@ export class GameplayScene {
             grenade.spin += dt * 9;
 
             const hitGround = grenade.position[1] <= GRENADE_RADIUS;
-            const hitBoundary =
-                Math.abs(grenade.position[0]) > ARENA_X ||
-                grenade.position[2] > ARENA_Z_BACK ||
-                grenade.position[2] < ARENA_Z_FRONT;
+            const hitBuilding = isLineBlockedByBuildings(
+                grenade.previousPosition,
+                grenade.position,
+                buildings.filter(
+                    (building) =>
+                        Math.min(grenade.previousPosition[1], grenade.position[1]) <=
+                        building.height + GRENADE_RADIUS,
+                ),
+                GRENADE_RADIUS,
+            );
             const hitEnemy = this.enemies.some(
                 (enemy) =>
                     enemy.health > 0 &&
@@ -380,7 +430,7 @@ export class GameplayScene {
                         enemy.radius + GRENADE_RADIUS,
             );
 
-            if (hitGround || hitBoundary || hitEnemy || grenade.age >= grenade.ttl) {
+            if (hitGround || hitBuilding || hitEnemy || grenade.age >= grenade.ttl) {
                 this.explodeGrenade(grenade.position);
                 this.grenades.splice(index, 1);
             }
@@ -391,6 +441,7 @@ export class GameplayScene {
         const blastPosition: Vec3 = [position[0], Math.max(0.42, position[1]), position[2]];
         this.explosions.push({ position: blastPosition, age: 0, ttl: 0.62, size: 1.55 });
         this.audio.enemyDown();
+        const buildings = this.cityBuildings();
 
         for (const enemy of this.enemies) {
             if (enemy.health <= 0) {
@@ -400,12 +451,21 @@ export class GameplayScene {
             if (distanceToBlast > GRENADE_BLAST_RADIUS) {
                 continue;
             }
+            if (
+                isLineBlockedByBuildings(
+                    blastPosition,
+                    enemy.position,
+                    buildings,
+                    Math.min(0.5, enemy.radius),
+                )
+            ) {
+                continue;
+            }
             const damage = Math.round(130 * (1 - distanceToBlast / GRENADE_BLAST_RADIUS) + 38);
             enemy.health -= damage;
             enemy.hitFlash = 0.24;
             if (enemy.health <= 0) {
                 this.player.kills += 1;
-                this.nextWaveTimer = 1.35;
             }
         }
 
@@ -474,93 +534,231 @@ export class GameplayScene {
         this.player.pitch = -0.04;
         this.player.ammo = MAX_AMMO;
         this.reloadTimer = 0;
+        this.updateCitySectors();
         this.radioLine = "Armure relancee. Reprends le terrain.";
         this.explosions.push({ position: [0, 1.2, 3.3], age: 0, ttl: 0.8, size: 1.7 });
     }
 
-    private spawnWave(): void {
-        const count = 4 + this.wave * 2;
-        for (let index = 0; index < count; index += 1) {
-            const row = Math.floor(index / 4);
-            const column = index % 4;
-            const x = -9 + column * 6 + ((index * 13) % 3) * 0.75;
-            const z = -13 - row * 5.2 - (index % 2) * 2.2;
-            this.enemies.push({
-                position: [x, 1.45, z],
-                health: 92 + this.wave * 12,
-                radius: 0.72,
-                phase: index * 1.31 + this.wave,
-                cooldown: 0.7 + index * 0.24,
-                hitFlash: 0,
-            });
-        }
-    }
-
-    private drawArena(time: number): void {
-        this.renderer.drawMesh(
-            this.plane,
-            fromTRS([0, 0, -18], [0, 0, 0], [72, 1, 70]),
-            [0.24, 0.22, 0.17, 1],
-            0,
-            0.95,
-        );
-        this.renderer.drawMesh(
-            this.plane,
-            fromTRS([0, 0.018, -18], [0, 0.32, 0], [15, 1, 80]),
-            [0.15, 0.15, 0.14, 1],
-            0,
-            0.9,
-        );
-        this.renderer.drawMesh(
-            this.box,
-            fromTRS([0, 0.1, 4.75], [-0.92, 0, 0], [3.3, 0.14, 3.6]),
-            [0.09, 0.095, 0.105, 1],
-            0,
-            0.4,
-        );
-        this.renderer.drawMesh(
-            this.box,
-            fromTRS([0, 1.35, 6.6], [0.18, 0, 0], [4.4, 2.7, 2.2]),
-            [0.12, 0.12, 0.13, 1],
-            0,
-            0.5,
-        );
-
-        for (let i = 0; i < 30; i += 1) {
-            const side = i % 2 === 0 ? -1 : 1;
-            const row = Math.floor(i / 2);
-            const height = 1.2 + ((i * 17) % 8) * 0.62;
-            const x = side * (4.4 + ((i * 7) % 5) * 1.55);
-            const z = -3.7 - row * 3.05;
-            const tilt = ((i % 5) - 2) * 0.035;
-            this.renderer.drawMesh(
-                this.box,
-                fromTRS([x, height / 2, z], [tilt, 0.04 * i, -tilt], [1.25, height, 1.2]),
-                [0.22, 0.21, 0.22, 1],
-                0,
-                0.86,
-            );
-            if (i % 4 === 0) {
-                this.renderer.drawMesh(
-                    this.box,
-                    fromTRS([x, height + 0.08, z], [0, 0.04 * i, 0], [1.35, 0.16, 1.25]),
-                    [0.95, 0.16, 0.12, 0.78],
-                    1.25,
-                    0.78,
-                );
+    private updateCitySectors(): void {
+        for (const [sx, sz] of getSectorsAround(this.player.position, ACTIVE_SECTOR_RADIUS)) {
+            const key = sectorKey(sx, sz);
+            if (!this.citySectors.has(key)) {
+                this.citySectors.set(key, generateCitySector(sx, sz));
             }
         }
 
-        for (let i = 0; i < 10; i += 1) {
-            const x = -14 + i * 3.1;
-            const z = -10 - (i % 4) * 7.8;
-            const pulse = 0.7 + Math.sin(time * 3.5 + i) * 0.3;
+        const keep = new Set(
+            getSectorsAround(this.player.position, CITY_KEEP_RADIUS).map(([sx, sz]) =>
+                sectorKey(sx, sz),
+            ),
+        );
+        for (const key of this.citySectors.keys()) {
+            if (!keep.has(key)) {
+                this.citySectors.delete(key);
+            }
+        }
+    }
+
+    private updateSpawning(dt: number, time: number): void {
+        this.spawnTimer -= dt;
+        if (this.spawnTimer > 0) {
+            return;
+        }
+
+        const aliveEnemies = this.aliveEnemyCount();
+        const targetCount = this.maxActiveEnemies();
+        const spawnInterval = Math.max(0.52, 2.1 - this.threatLevel * 0.09);
+        this.spawnTimer = spawnInterval + Math.random() * 0.75;
+        if (aliveEnemies >= targetCount) {
+            return;
+        }
+
+        this.spawnEnemy(time);
+    }
+
+    private spawnEnemy(time: number): void {
+        const buildings = this.cityBuildings();
+        for (let attempt = 0; attempt < 18; attempt += 1) {
+            const angle = Math.random() * Math.PI * 2;
+            const distance =
+                ENEMY_SPAWN_MIN_DISTANCE +
+                Math.random() * (ENEMY_SPAWN_MAX_DISTANCE - ENEMY_SPAWN_MIN_DISTANCE);
+            const rawPosition: Vec3 = [
+                this.player.position[0] + Math.cos(angle) * distance,
+                1.45,
+                this.player.position[2] + Math.sin(angle) * distance,
+            ];
+            const spawnPosition = resolveCircleAgainstBuildings(
+                nearestStreetPoint(rawPosition),
+                ENEMY_RADIUS,
+                buildings,
+            );
+            const toPlayer = sub(this.player.position, spawnPosition);
+            const playerDistance = length([toPlayer[0], 0, toPlayer[2]]);
+            if (playerDistance < ENEMY_SPAWN_MIN_DISTANCE) {
+                continue;
+            }
+            if (
+                playerDistance < 48 &&
+                !isLineBlockedByBuildings(spawnPosition, this.eyePosition(), buildings, 0.4)
+            ) {
+                continue;
+            }
+
+            this.enemies.push({
+                position: spawnPosition,
+                waypoint: getStreetWaypoint(spawnPosition, this.player.position),
+                health: 92 + this.threatLevel * 10,
+                radius: ENEMY_RADIUS,
+                phase: time * 1.7 + Math.random() * Math.PI * 2,
+                cooldown: 0.45 + Math.random() * 1.3,
+                hitFlash: 0,
+                pathTimer: 0,
+            });
+            return;
+        }
+    }
+
+    private movePlayer(delta: Vec3): void {
+        const buildings = this.cityBuildings();
+        const nextX: Vec3 = [
+            this.player.position[0] + delta[0],
+            this.player.position[1],
+            this.player.position[2],
+        ];
+        this.player.position = resolveCircleAgainstBuildings(nextX, PLAYER_RADIUS, buildings);
+
+        const nextZ: Vec3 = [
+            this.player.position[0],
+            this.player.position[1],
+            this.player.position[2] + delta[2],
+        ];
+        this.player.position = resolveCircleAgainstBuildings(nextZ, PLAYER_RADIUS, buildings);
+    }
+
+    private cityBuildings(): Building[] {
+        return collectBuildings([...this.citySectors.values()]);
+    }
+
+    private aliveEnemyCount(): number {
+        return this.enemies.filter((enemy) => enemy.health > 0).length;
+    }
+
+    private maxActiveEnemies(): number {
+        return Math.min(24, 8 + this.threatLevel * 2);
+    }
+
+    private removeDeadEnemies(): void {
+        for (let index = this.enemies.length - 1; index >= 0; index -= 1) {
+            if (this.enemies[index].health <= 0) {
+                this.enemies.splice(index, 1);
+            }
+        }
+    }
+
+    private drawCity(time: number): void {
+        const roadWidth = STREET_HALF_WIDTH * 2;
+        for (const sector of this.citySectors.values()) {
+            const centerX = (sector.bounds.minX + sector.bounds.maxX) / 2;
+            const centerZ = (sector.bounds.minZ + sector.bounds.maxZ) / 2;
+            this.renderer.drawMesh(
+                this.plane,
+                fromTRS([centerX, 0, centerZ], [0, 0, 0], [CITY_SECTOR_SIZE, 1, CITY_SECTOR_SIZE]),
+                [0.115, 0.108, 0.102, 1],
+                0,
+                0.95,
+            );
+
+            for (let line = 0; line <= CITY_SECTOR_SIZE / CITY_BLOCK_SIZE; line += 1) {
+                const x = sector.bounds.minX + line * CITY_BLOCK_SIZE;
+                const z = sector.bounds.minZ + line * CITY_BLOCK_SIZE;
+                this.renderer.drawMesh(
+                    this.plane,
+                    fromTRS([x, 0.018, centerZ], [0, 0, 0], [roadWidth, 1, CITY_SECTOR_SIZE]),
+                    [0.045, 0.045, 0.048, 1],
+                    0,
+                    0.88,
+                );
+                this.renderer.drawMesh(
+                    this.plane,
+                    fromTRS([centerX, 0.02, z], [0, 0, 0], [CITY_SECTOR_SIZE, 1, roadWidth]),
+                    [0.045, 0.045, 0.048, 1],
+                    0,
+                    0.88,
+                );
+                this.renderer.drawMesh(
+                    this.plane,
+                    fromTRS([x, 0.024, centerZ], [0, 0, 0], [0.14, 1, CITY_SECTOR_SIZE]),
+                    [0.95, 0.18, 0.12, 0.18],
+                    1.1,
+                    0.72,
+                );
+                this.renderer.drawMesh(
+                    this.plane,
+                    fromTRS([centerX, 0.026, z], [0, 0, 0], [CITY_SECTOR_SIZE, 1, 0.14]),
+                    [0.95, 0.18, 0.12, 0.18],
+                    1.1,
+                    0.72,
+                );
+            }
+
+            for (const building of sector.buildings) {
+                this.drawBuilding(building, time);
+            }
+        }
+    }
+
+    private drawBuilding(building: Building, time: number): void {
+        const width = building.bounds.maxX - building.bounds.minX;
+        const depth = building.bounds.maxZ - building.bounds.minZ;
+        const centerX = (building.bounds.minX + building.bounds.maxX) / 2;
+        const centerZ = (building.bounds.minZ + building.bounds.maxZ) / 2;
+        const height = building.height;
+        const flicker = 0.78 + Math.sin(time * 3.3 + building.seed * 0.001) * 0.22;
+        this.renderer.drawMesh(
+            this.box,
+            fromTRS([centerX, height / 2, centerZ], [0, 0, 0], [width, height, depth]),
+            [building.color[0], building.color[1], building.color[2], 1],
+            0,
+            0.72,
+        );
+        this.renderer.drawMesh(
+            this.box,
+            fromTRS(
+                [centerX, height + 0.04, centerZ],
+                [0, 0, 0],
+                [width * 1.04, 0.08, depth * 1.04],
+            ),
+            [0.065, 0.068, 0.075, 1],
+            0.15,
+            0.58,
+        );
+
+        if (building.seed % 3 === 0) {
             this.renderer.drawMesh(
                 this.box,
-                fromTRS([x, 0.45, z], [0, i * 0.4, 0], [0.24, 0.9, 0.24]),
-                [1, 0.18, 0.1, 0.18 + pulse * 0.12],
-                1.8,
-                0.62,
+                fromTRS(
+                    [centerX, height * 0.52, building.bounds.minZ - 0.035],
+                    [0, 0, 0],
+                    [Math.max(0.7, width * 0.16), height * 0.58, 0.06],
+                ),
+                [0.95, 0.18 + flicker * 0.24, 0.12, 0.48],
+                1.2 * flicker,
+                0.5,
+            );
+        }
+
+        if (building.seed % 5 === 0) {
+            this.renderer.drawMesh(
+                this.box,
+                fromTRS(
+                    [building.bounds.maxX + 0.035, height * 0.48, centerZ],
+                    [0, 0, 0],
+                    [0.06, height * 0.48, Math.max(0.8, depth * 0.18)],
+                ),
+                [0.28, 0.74, 0.95, 0.36],
+                0.95 * flicker,
+                0.54,
             );
         }
     }
@@ -734,18 +932,19 @@ export class GameplayScene {
             "alarm",
             this.damageFlash > 0.35 || this.player.health <= 28,
         );
-        this.hud.phase.textContent = `VAGUE ${this.wave}`;
+        const [sectorX, sectorZ] = worldToSector(this.player.position);
+        this.hud.phase.textContent = `VILLE ${sectorX}:${sectorZ}`;
         this.hud.velocity.textContent = `ARMURE ${Math.round(this.player.health)}%`;
         const charge = this.grenadeCharge();
         const ammoText = this.reloadTimer > 0 ? "RECHARGE" : `${this.player.ammo}/${MAX_AMMO}`;
         this.hud.altitude.textContent = `MUN ${ammoText}`;
-        const aliveEnemies = this.enemies.filter((enemy) => enemy.health > 0).length;
-        this.hud.signal.textContent = `MENACES ${aliveEnemies}`;
+        const aliveEnemies = this.aliveEnemyCount();
+        this.hud.signal.textContent = `MENACES ${aliveEnemies}/${this.maxActiveEnemies()}`;
         this.hud.mission.textContent = this.input.isPrimaryDown
             ? `Charge grenade ${Math.round(charge * 100)}%`
             : aliveEnemies > 0
-              ? "Nettoyer la zone"
-              : "Tenir la position";
+              ? `Survivre menace ${this.threatLevel}`
+              : "Reperer les rues";
         const text = this.radioLine;
         const visibleChars = Math.min(text.length, Math.floor((time * 18) % (text.length + 16)));
         this.hud.radioMessage.textContent = text.slice(0, visibleChars);

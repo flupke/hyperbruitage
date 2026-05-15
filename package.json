@@ -11,8 +11,10 @@
         "format:check": "oxfmt --check .",
         "lint": "oxlint",
         "lint:fix": "oxlint --fix",
+        "test:compile": "tsc -p tsconfig.test.json",
+        "test": "pnpm test:compile && node --test test/*.test.mjs",
         "typecheck": "tsc -p tsconfig.json --noEmit",
-        "check": "pnpm typecheck && pnpm lint && pnpm format:check"
+        "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm format:check"
     },
     "devDependencies": {
         "oxfmt": "^0.49.0",

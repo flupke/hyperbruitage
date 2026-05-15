@@ -1,5 +1,5 @@
 /dist
+/.test-build
 /node_modules
 /.vite
-/.direnv
 /.direnv
