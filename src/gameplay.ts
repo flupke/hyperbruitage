@@ -7,6 +7,7 @@ import {
     dot,
     fromTRS,
     length,
+    lerp,
     lookAt,
     normalize,
     perspective,
@@ -14,7 +15,10 @@ import {
     sub,
     type Vec3,
 } from "./math";
-import { Renderer, type Mesh } from "./renderer";
+import { Renderer, type Mesh, type SpriteTexture } from "./renderer";
+
+const CACA_PARTICLE_URL = new URL("./images/caca.png", import.meta.url).href;
+const MARC_PROJECTILE_URL = new URL("./images/marc.png", import.meta.url).href;
 
 interface HudElements {
     helmet: HTMLElement;
@@ -54,6 +58,15 @@ interface Beam {
     emissive: number;
 }
 
+interface Grenade {
+    position: Vec3;
+    previousPosition: Vec3;
+    velocity: Vec3;
+    age: number;
+    ttl: number;
+    spin: number;
+}
+
 interface Explosion {
     position: Vec3;
     age: number;
@@ -61,19 +74,39 @@ interface Explosion {
     size: number;
 }
 
-const MAX_AMMO = 36;
+interface CacaParticle {
+    position: Vec3;
+    velocity: Vec3;
+    age: number;
+    ttl: number;
+    size: number;
+    rotation: number;
+    spin: number;
+}
+
+const MAX_AMMO = 12;
+const MAX_GRENADE_CHARGE = 1.45;
+const MIN_GRENADE_SPEED = 10;
+const MAX_GRENADE_SPEED = 29;
+const GRENADE_GRAVITY = 12.8;
+const GRENADE_RADIUS = 0.34;
+const GRENADE_BLAST_RADIUS = 5.8;
 const ARENA_X = 18;
 const ARENA_Z_BACK = 5.5;
 const ARENA_Z_FRONT = -43;
 
 export class GameplayScene {
     private readonly box: Mesh;
+    private readonly cacaTexture: SpriteTexture;
+    private readonly projectileTexture: SpriteTexture;
     private readonly plane: Mesh;
     private readonly pyramid: Mesh;
     private readonly sphere: Mesh;
     private readonly enemies: Enemy[] = [];
     private readonly beams: Beam[] = [];
+    private readonly grenades: Grenade[] = [];
     private readonly explosions: Explosion[] = [];
+    private readonly cacaParticles: CacaParticle[] = [];
     private readonly player: Player = {
         position: [0, 1.62, 3.3],
         yaw: 0,
@@ -99,6 +132,8 @@ export class GameplayScene {
         private readonly audio: AudioFX,
     ) {
         this.box = renderer.createMesh(createBox());
+        this.cacaTexture = renderer.createTexture(CACA_PARTICLE_URL);
+        this.projectileTexture = renderer.createTexture(MARC_PROJECTILE_URL);
         this.plane = renderer.createMesh(createPlane());
         this.pyramid = renderer.createMesh(createPyramid());
         this.sphere = renderer.createMesh(createSphere(12, 7));
@@ -121,7 +156,9 @@ export class GameplayScene {
         this.player.kills = 0;
         this.enemies.length = 0;
         this.beams.length = 0;
+        this.grenades.length = 0;
         this.explosions.length = 0;
+        this.cacaParticles.length = 0;
         this.spawnWave();
         this.hud.helmet.classList.add("active");
         this.hud.helmet.classList.remove("alarm");
@@ -214,11 +251,13 @@ export class GameplayScene {
             this.radioLine = "Rearmement en cours.";
         }
 
-        if (this.input.consumeShot()) {
-            this.fire();
+        const releasedCharge = this.input.consumePrimaryRelease();
+        if (releasedCharge !== null) {
+            this.fireGrenade(releasedCharge);
         }
 
         this.updateEnemies(dt, time);
+        this.updateGrenades(dt);
         this.updateEffects(dt);
         this.damageFlash = Math.max(0, this.damageFlash - dt * 2.6);
 
@@ -234,7 +273,7 @@ export class GameplayScene {
         }
     }
 
-    private fire(): void {
+    private fireGrenade(heldSeconds: number): void {
         if (this.shotCooldown > 0 || this.reloadTimer > 0) {
             return;
         }
@@ -246,57 +285,22 @@ export class GameplayScene {
         }
 
         this.player.ammo -= 1;
-        this.shotCooldown = 0.13;
+        this.shotCooldown = 0.42;
         this.audio.shoot();
 
-        const eye = this.eyePosition();
+        const charge = clamp01(heldSeconds / MAX_GRENADE_CHARGE);
         const direction = this.lookDirection();
-        let bestEnemy: Enemy | null = null;
-        let bestDistance = 90;
-        let bestPoint = add(eye, scale(direction, 65));
-
-        for (const enemy of this.enemies) {
-            if (enemy.health <= 0) {
-                continue;
-            }
-            const toEnemy = sub(enemy.position, eye);
-            const projection = dot(toEnemy, direction);
-            if (projection <= 0 || projection > bestDistance) {
-                continue;
-            }
-            const closest = add(eye, scale(direction, projection));
-            const missDistance = length(sub(enemy.position, closest));
-            if (missDistance < enemy.radius) {
-                bestEnemy = enemy;
-                bestDistance = projection;
-                bestPoint = closest;
-            }
-        }
-
-        this.beams.push({
-            from: this.weaponMuzzle(),
-            to: bestPoint,
+        const muzzle = this.weaponMuzzle();
+        const start = add(muzzle, scale(direction, 0.36));
+        const speed = lerp(MIN_GRENADE_SPEED, MAX_GRENADE_SPEED, charge);
+        this.grenades.push({
+            position: start,
+            previousPosition: start,
+            velocity: scale(direction, speed),
             age: 0,
-            ttl: 0.09,
-            width: 0.055,
-            color: [0.55, 0.95, 1, 0.86],
-            emissive: 2.6,
+            ttl: 4.2,
+            spin: Math.random() * Math.PI,
         });
-
-        if (!bestEnemy) {
-            return;
-        }
-
-        bestEnemy.health -= 46;
-        bestEnemy.hitFlash = 0.18;
-        this.audio.enemyHit();
-        this.explosions.push({ position: bestPoint, age: 0, ttl: 0.28, size: 0.55 });
-        if (bestEnemy.health <= 0) {
-            this.player.kills += 1;
-            this.nextWaveTimer = 1.35;
-            this.explosions.push({ position: bestEnemy.position, age: 0, ttl: 0.58, size: 1.35 });
-            this.audio.enemyDown();
-        }
     }
 
     private updateEnemies(dt: number, time: number): void {
@@ -351,6 +355,85 @@ export class GameplayScene {
         }
     }
 
+    private updateGrenades(dt: number): void {
+        for (let index = this.grenades.length - 1; index >= 0; index -= 1) {
+            const grenade = this.grenades[index];
+            grenade.age += dt;
+            grenade.previousPosition = grenade.position;
+            grenade.velocity = add(grenade.velocity, [0, -GRENADE_GRAVITY * dt, 0]);
+            grenade.position = add(grenade.position, scale(grenade.velocity, dt));
+            grenade.spin += dt * 9;
+
+            const hitGround = grenade.position[1] <= GRENADE_RADIUS;
+            const hitBoundary =
+                Math.abs(grenade.position[0]) > ARENA_X ||
+                grenade.position[2] > ARENA_Z_BACK ||
+                grenade.position[2] < ARENA_Z_FRONT;
+            const hitEnemy = this.enemies.some(
+                (enemy) =>
+                    enemy.health > 0 &&
+                    this.distanceToSegment(
+                        enemy.position,
+                        grenade.previousPosition,
+                        grenade.position,
+                    ) <=
+                        enemy.radius + GRENADE_RADIUS,
+            );
+
+            if (hitGround || hitBoundary || hitEnemy || grenade.age >= grenade.ttl) {
+                this.explodeGrenade(grenade.position);
+                this.grenades.splice(index, 1);
+            }
+        }
+    }
+
+    private explodeGrenade(position: Vec3): void {
+        const blastPosition: Vec3 = [position[0], Math.max(0.42, position[1]), position[2]];
+        this.explosions.push({ position: blastPosition, age: 0, ttl: 0.62, size: 1.55 });
+        this.audio.enemyDown();
+
+        for (const enemy of this.enemies) {
+            if (enemy.health <= 0) {
+                continue;
+            }
+            const distanceToBlast = length(sub(enemy.position, blastPosition));
+            if (distanceToBlast > GRENADE_BLAST_RADIUS) {
+                continue;
+            }
+            const damage = Math.round(130 * (1 - distanceToBlast / GRENADE_BLAST_RADIUS) + 38);
+            enemy.health -= damage;
+            enemy.hitFlash = 0.24;
+            if (enemy.health <= 0) {
+                this.player.kills += 1;
+                this.nextWaveTimer = 1.35;
+            }
+        }
+
+        for (let index = 0; index < 34; index += 1) {
+            const angle = Math.random() * Math.PI * 2;
+            const lift = 0.32 + Math.random() * 0.92;
+            const speed = 3.2 + Math.random() * 7.8;
+            const spread = Math.sqrt(Math.random());
+            this.cacaParticles.push({
+                position: add(blastPosition, [
+                    Math.cos(angle) * spread * 0.4,
+                    Math.random() * 0.5,
+                    Math.sin(angle) * spread * 0.4,
+                ]),
+                velocity: [
+                    Math.cos(angle) * speed * spread,
+                    lift * speed,
+                    Math.sin(angle) * speed * spread,
+                ],
+                age: 0,
+                ttl: 0.75 + Math.random() * 0.75,
+                size: 0.42 + Math.random() * 0.72,
+                rotation: Math.random() * Math.PI * 2,
+                spin: (Math.random() - 0.5) * 8,
+            });
+        }
+    }
+
     private updateEffects(dt: number): void {
         for (let index = this.beams.length - 1; index >= 0; index -= 1) {
             this.beams[index].age += dt;
@@ -363,6 +446,23 @@ export class GameplayScene {
             this.explosions[index].age += dt;
             if (this.explosions[index].age >= this.explosions[index].ttl) {
                 this.explosions.splice(index, 1);
+            }
+        }
+
+        for (let index = this.cacaParticles.length - 1; index >= 0; index -= 1) {
+            const particle = this.cacaParticles[index];
+            particle.age += dt;
+            particle.velocity = add(particle.velocity, [0, -GRENADE_GRAVITY * 0.62 * dt, 0]);
+            particle.position = add(particle.position, scale(particle.velocity, dt));
+            particle.rotation += particle.spin * dt;
+            if (particle.position[1] < 0.12) {
+                particle.position[1] = 0.12;
+                particle.velocity[1] *= -0.18;
+                particle.velocity[0] *= 0.74;
+                particle.velocity[2] *= 0.74;
+            }
+            if (particle.age >= particle.ttl) {
+                this.cacaParticles.splice(index, 1);
             }
         }
     }
@@ -506,9 +606,13 @@ export class GameplayScene {
     }
 
     private drawEffects(time: number): void {
+        for (const grenade of this.grenades) {
+            this.drawGrenade(grenade);
+        }
+
         for (const beam of this.beams) {
             const fade = 1 - beam.age / beam.ttl;
-            this.drawBeam(
+            this.drawAlienBeam(
                 beam.from,
                 beam.to,
                 beam.width * (0.55 + fade),
@@ -529,6 +633,31 @@ export class GameplayScene {
                 0.45,
             );
         }
+
+        for (const particle of this.cacaParticles) {
+            const t = clamp01(particle.age / particle.ttl);
+            const alpha = 1 - t;
+            const squash = 1 + t * 0.42;
+            this.renderer.drawBillboard(
+                this.cacaTexture,
+                particle.position,
+                [particle.size * 1.52 * squash, particle.size],
+                [1, 0.92, 0.72, alpha],
+                particle.rotation,
+            );
+        }
+    }
+
+    private drawGrenade(grenade: Grenade): void {
+        const flightPulse = 1 + Math.sin(grenade.age * 18) * 0.05;
+        this.renderer.drawBillboard(
+            this.projectileTexture,
+            grenade.position,
+            [GRENADE_RADIUS * 2.75 * flightPulse, GRENADE_RADIUS * 2.75],
+            [1, 1, 1, 1],
+            grenade.spin,
+            true,
+        );
     }
 
     private drawWeapon(time: number): void {
@@ -550,26 +679,35 @@ export class GameplayScene {
         this.renderer.drawMesh(
             this.box,
             fromTRS(add(base, scale(look, 0.44)), rotation, [0.25, 0.2, 0.72]),
-            [0.76, 0.08, 0.14, 1],
-            0.9,
+            [0.2, 0.34, 0.16, 1],
+            0.45,
             0.18,
         );
-        if (this.shotCooldown > 0.075) {
+
+        const charge = this.grenadeCharge();
+        if (this.input.isPrimaryDown) {
+            const chargePulse = 0.26 + charge * 0.34 + Math.sin(time * 18) * 0.025;
+            const heldGrenade = add(add(base, scale(look, 0.9)), scale(right, 0.02));
+            this.renderer.drawBillboard(
+                this.projectileTexture,
+                heldGrenade,
+                [chargePulse * 2.1, chargePulse * 2.1],
+                [1, 1, 1, 1],
+                time * 5,
+                true,
+            );
+        } else if (this.shotCooldown > 0.25) {
             this.renderer.drawMesh(
-                this.pyramid,
-                fromTRS(
-                    add(muzzle, scale(look, 0.12)),
-                    [this.player.pitch + Math.PI / 2, this.player.yaw, time * 32],
-                    [0.42, 0.42, 0.75],
-                ),
-                [0.55, 0.96, 1, 0.78],
-                2.8,
+                this.box,
+                fromTRS(add(muzzle, scale(look, 0.08)), rotation, [0.36, 0.2, 0.38]),
+                [0.68, 0.95, 0.38, 0.46],
+                1.2,
                 0.12,
             );
         }
     }
 
-    private drawBeam(
+    private drawAlienBeam(
         from: Vec3,
         to: Vec3,
         width: number,
@@ -598,14 +736,30 @@ export class GameplayScene {
         );
         this.hud.phase.textContent = `VAGUE ${this.wave}`;
         this.hud.velocity.textContent = `ARMURE ${Math.round(this.player.health)}%`;
+        const charge = this.grenadeCharge();
         const ammoText = this.reloadTimer > 0 ? "RECHARGE" : `${this.player.ammo}/${MAX_AMMO}`;
         this.hud.altitude.textContent = `MUN ${ammoText}`;
         const aliveEnemies = this.enemies.filter((enemy) => enemy.health > 0).length;
         this.hud.signal.textContent = `MENACES ${aliveEnemies}`;
-        this.hud.mission.textContent = aliveEnemies > 0 ? "Nettoyer la zone" : "Tenir la position";
+        this.hud.mission.textContent = this.input.isPrimaryDown
+            ? `Charge grenade ${Math.round(charge * 100)}%`
+            : aliveEnemies > 0
+              ? "Nettoyer la zone"
+              : "Tenir la position";
         const text = this.radioLine;
         const visibleChars = Math.min(text.length, Math.floor((time * 18) % (text.length + 16)));
         this.hud.radioMessage.textContent = text.slice(0, visibleChars);
+    }
+
+    private grenadeCharge(): number {
+        return clamp01(this.input.primaryHoldSeconds(performance.now()) / MAX_GRENADE_CHARGE);
+    }
+
+    private distanceToSegment(point: Vec3, start: Vec3, end: Vec3): number {
+        const segment = sub(end, start);
+        const segmentLengthSquared = Math.max(0.0001, dot(segment, segment));
+        const t = clamp01(dot(sub(point, start), segment) / segmentLengthSquared);
+        return length(sub(point, add(start, scale(segment, t))));
     }
 
     private eyePosition(): Vec3 {

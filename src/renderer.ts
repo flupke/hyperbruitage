@@ -8,6 +8,10 @@ export interface Mesh {
     indexCount: number;
 }
 
+export interface SpriteTexture {
+    texture: WebGLTexture;
+}
+
 interface StarField {
     positionBuffer: WebGLBuffer;
     sizeBuffer: WebGLBuffer;
@@ -52,11 +56,30 @@ interface EarthProgram {
     uTime: WebGLUniformLocation;
 }
 
+interface SpriteProgram {
+    program: WebGLProgram;
+    aCorner: number;
+    aUv: number;
+    uProjection: WebGLUniformLocation;
+    uView: WebGLUniformLocation;
+    uCenter: WebGLUniformLocation;
+    uCameraRight: WebGLUniformLocation;
+    uCameraUp: WebGLUniformLocation;
+    uSize: WebGLUniformLocation;
+    uRotation: WebGLUniformLocation;
+    uColor: WebGLUniformLocation;
+    uTexture: WebGLUniformLocation;
+    uOpaque: WebGLUniformLocation;
+}
+
 export class Renderer {
     private readonly gl: WebGLRenderingContext;
     private readonly meshProgram: MeshProgram;
     private readonly starProgram: StarProgram;
     private readonly earthProgram: EarthProgram;
+    private readonly spriteProgram: SpriteProgram;
+    private readonly spriteVertexBuffer: WebGLBuffer;
+    private readonly spriteIndexBuffer: WebGLBuffer;
     private projection: Mat4 | null = null;
     private view: Mat4 | null = null;
     private cameraPosition: Vec3 = [0, 0, 0];
@@ -77,6 +100,11 @@ export class Renderer {
         this.meshProgram = this.createMeshProgram();
         this.starProgram = this.createStarProgram();
         this.earthProgram = this.createEarthProgram();
+        this.spriteProgram = this.createSpriteProgram();
+        this.spriteVertexBuffer = this.createArrayBuffer(
+            new Float32Array([-0.5, -0.5, 0, 1, 0.5, -0.5, 1, 1, 0.5, 0.5, 1, 0, -0.5, 0.5, 0, 0]),
+        );
+        this.spriteIndexBuffer = this.createElementBuffer(new Uint16Array([0, 1, 2, 0, 2, 3]));
         gl.enable(gl.DEPTH_TEST);
         gl.enable(gl.CULL_FACE);
         gl.cullFace(gl.BACK);
@@ -117,6 +145,40 @@ export class Renderer {
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
         gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(data.indices), gl.STATIC_DRAW);
         return { positionBuffer, normalBuffer, indexBuffer, indexCount: data.indices.length };
+    }
+
+    createTexture(url: string): SpriteTexture {
+        const gl = this.gl;
+        const texture = gl.createTexture();
+        if (!texture) {
+            throw new Error("Impossible de creer une texture WebGL.");
+        }
+
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(
+            gl.TEXTURE_2D,
+            0,
+            gl.RGBA,
+            1,
+            1,
+            0,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            new Uint8Array([255, 255, 255, 255]),
+        );
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
+        const image = new Image();
+        image.addEventListener("load", () => {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        });
+        image.src = url;
+
+        return { texture };
     }
 
     createStarField(seed = 73, count = 680): StarField {
@@ -257,6 +319,51 @@ export class Renderer {
         gl.drawElements(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_SHORT, 0);
     }
 
+    drawBillboard(
+        texture: SpriteTexture,
+        center: Vec3,
+        size: [number, number],
+        color: [number, number, number, number],
+        rotation = 0,
+        opaque = false,
+    ): void {
+        if (!this.projection || !this.view) {
+            return;
+        }
+
+        const gl = this.gl;
+        const p = this.spriteProgram;
+        const cameraRight: Vec3 = [this.view[0], this.view[4], this.view[8]];
+        const cameraUp: Vec3 = [this.view[1], this.view[5], this.view[9]];
+
+        gl.useProgram(p.program);
+        gl.depthMask(false);
+        gl.disable(gl.CULL_FACE);
+        gl.uniformMatrix4fv(p.uProjection, false, this.projection);
+        gl.uniformMatrix4fv(p.uView, false, this.view);
+        gl.uniform3fv(p.uCenter, center);
+        gl.uniform3fv(p.uCameraRight, cameraRight);
+        gl.uniform3fv(p.uCameraUp, cameraUp);
+        gl.uniform2fv(p.uSize, size);
+        gl.uniform1f(p.uRotation, rotation);
+        gl.uniform4fv(p.uColor, color);
+        gl.uniform1f(p.uOpaque, opaque ? 1 : 0);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, texture.texture);
+        gl.uniform1i(p.uTexture, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteVertexBuffer);
+        gl.enableVertexAttribArray(p.aCorner);
+        gl.vertexAttribPointer(p.aCorner, 2, gl.FLOAT, false, 16, 0);
+        gl.enableVertexAttribArray(p.aUv);
+        gl.vertexAttribPointer(p.aUv, 2, gl.FLOAT, false, 16, 8);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.spriteIndexBuffer);
+        gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+        gl.enable(gl.CULL_FACE);
+        gl.depthMask(true);
+    }
+
     private createArrayBuffer(data: Float32Array): WebGLBuffer {
         const buffer = this.gl.createBuffer();
         if (!buffer) {
@@ -264,6 +371,16 @@ export class Renderer {
         }
         this.gl.bindBuffer(this.gl.ARRAY_BUFFER, buffer);
         this.gl.bufferData(this.gl.ARRAY_BUFFER, data, this.gl.STATIC_DRAW);
+        return buffer;
+    }
+
+    private createElementBuffer(data: Uint16Array): WebGLBuffer {
+        const buffer = this.gl.createBuffer();
+        if (!buffer) {
+            throw new Error("Impossible de creer un element buffer WebGL.");
+        }
+        this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, buffer);
+        this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, data, this.gl.STATIC_DRAW);
         return buffer;
     }
 
@@ -522,6 +639,64 @@ export class Renderer {
             uFogDensity: this.mustUniform(program, "uFogDensity"),
             uSunDirection: this.mustUniform(program, "uSunDirection"),
             uTime: this.mustUniform(program, "uTime"),
+        };
+    }
+
+    private createSpriteProgram(): SpriteProgram {
+        const vertex = `
+      attribute vec2 aCorner;
+      attribute vec2 aUv;
+      uniform mat4 uProjection;
+      uniform mat4 uView;
+      uniform vec3 uCenter;
+      uniform vec3 uCameraRight;
+      uniform vec3 uCameraUp;
+      uniform vec2 uSize;
+      uniform float uRotation;
+      varying vec2 vUv;
+
+      void main() {
+        float c = cos(uRotation);
+        float s = sin(uRotation);
+        vec2 rotated = vec2(aCorner.x * c - aCorner.y * s, aCorner.x * s + aCorner.y * c);
+        vec3 worldPosition = uCenter + uCameraRight * rotated.x * uSize.x + uCameraUp * rotated.y * uSize.y;
+        vUv = aUv;
+        gl_Position = uProjection * uView * vec4(worldPosition, 1.0);
+      }
+    `;
+        const fragment = `
+      precision mediump float;
+      uniform sampler2D uTexture;
+      uniform vec4 uColor;
+      uniform float uOpaque;
+      varying vec2 vUv;
+
+      void main() {
+        vec4 texel = texture2D(uTexture, vUv);
+        float alphaCutoff = uOpaque > 0.5 ? 0.34 : 0.02;
+        if (texel.a < alphaCutoff) {
+          discard;
+        }
+        vec3 tinted = mix(texel.rgb, texel.rgb * uColor.rgb, 0.34);
+        float alpha = uOpaque > 0.5 ? 1.0 : texel.a * uColor.a;
+        gl_FragColor = vec4(tinted, alpha);
+      }
+    `;
+        const program = this.linkProgram(vertex, fragment);
+        return {
+            program,
+            aCorner: this.gl.getAttribLocation(program, "aCorner"),
+            aUv: this.gl.getAttribLocation(program, "aUv"),
+            uProjection: this.mustUniform(program, "uProjection"),
+            uView: this.mustUniform(program, "uView"),
+            uCenter: this.mustUniform(program, "uCenter"),
+            uCameraRight: this.mustUniform(program, "uCameraRight"),
+            uCameraUp: this.mustUniform(program, "uCameraUp"),
+            uSize: this.mustUniform(program, "uSize"),
+            uRotation: this.mustUniform(program, "uRotation"),
+            uColor: this.mustUniform(program, "uColor"),
+            uTexture: this.mustUniform(program, "uTexture"),
+            uOpaque: this.mustUniform(program, "uOpaque"),
         };
     }
 

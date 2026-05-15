@@ -15,9 +15,11 @@ const movementKeys = new Set([
 
 export class InputController {
     private readonly keys = new Set<string>();
+    private readonly primaryReleases: number[] = [];
     private lookX = 0;
     private lookY = 0;
-    private shot = false;
+    private primaryStartedAt = 0;
+    private primaryDown = false;
 
     constructor(private readonly canvas: HTMLCanvasElement) {
         window.addEventListener("keydown", (event) => {
@@ -44,13 +46,28 @@ export class InputController {
                 return;
             }
             if (document.pointerLockElement === this.canvas || event.target === this.canvas) {
-                this.shot = true;
+                if (!this.primaryDown) {
+                    this.primaryDown = true;
+                    this.primaryStartedAt = performance.now();
+                }
             }
+        });
+
+        document.addEventListener("mouseup", (event) => {
+            if (event.button !== 0 || !this.primaryDown) {
+                return;
+            }
+            this.primaryDown = false;
+            this.primaryReleases.push((performance.now() - this.primaryStartedAt) / 1000);
         });
     }
 
     get locked(): boolean {
         return document.pointerLockElement === this.canvas;
+    }
+
+    get isPrimaryDown(): boolean {
+        return this.primaryDown;
     }
 
     requestPointerLock(): void {
@@ -68,15 +85,22 @@ export class InputController {
         return delta;
     }
 
-    consumeShot(): boolean {
-        const didShoot = this.shot;
-        this.shot = false;
-        return didShoot;
+    consumePrimaryRelease(): number | null {
+        return this.primaryReleases.shift() ?? null;
+    }
+
+    primaryHoldSeconds(now: number): number {
+        if (!this.primaryDown) {
+            return 0;
+        }
+        return Math.max(0, (now - this.primaryStartedAt) / 1000);
     }
 
     clearTransient(): void {
         this.lookX = 0;
         this.lookY = 0;
-        this.shot = false;
+        this.primaryDown = false;
+        this.primaryStartedAt = 0;
+        this.primaryReleases.length = 0;
     }
 }
