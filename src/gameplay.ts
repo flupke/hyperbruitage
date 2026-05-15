@@ -15,7 +15,7 @@ import {
     type Building,
     type CitySector,
 } from "./city";
-import { createBox, createPlane, createPyramid, createSphere } from "./geometry";
+import { createBox, createPlane, createSphere } from "./geometry";
 import { InputController } from "./input";
 import {
     add,
@@ -31,10 +31,15 @@ import {
     sub,
     type Vec3,
 } from "./math";
-import { Renderer, type Mesh, type SpriteTexture } from "./renderer";
+import { Renderer, type AnimatedBillboard, type Mesh, type SpriteTexture } from "./renderer";
 
 const CACA_PARTICLE_URL = new URL("./images/caca.png", import.meta.url).href;
 const MARC_PROJECTILE_URL = new URL("./images/marc.png", import.meta.url).href;
+const ALIEN_TEXTURE_URLS = [
+    new URL("./images/alien-01.png", import.meta.url).href,
+    new URL("./images/alien-02.png", import.meta.url).href,
+    new URL("./images/alien-03.png", import.meta.url).href,
+];
 
 interface HudElements {
     helmet: HTMLElement;
@@ -119,10 +124,10 @@ const ENEMY_DESPAWN_DISTANCE = CITY_SECTOR_SIZE * 3.35;
 
 export class GameplayScene {
     private readonly box: Mesh;
+    private readonly alienBillboard: AnimatedBillboard;
     private readonly cacaTexture: SpriteTexture;
     private readonly projectileTexture: SpriteTexture;
     private readonly plane: Mesh;
-    private readonly pyramid: Mesh;
     private readonly sphere: Mesh;
     private readonly enemies: Enemy[] = [];
     private readonly beams: Beam[] = [];
@@ -155,10 +160,10 @@ export class GameplayScene {
         private readonly audio: AudioFX,
     ) {
         this.box = renderer.createMesh(createBox());
+        this.alienBillboard = renderer.createAnimatedBillboard(ALIEN_TEXTURE_URLS);
         this.cacaTexture = renderer.createTexture(CACA_PARTICLE_URL);
         this.projectileTexture = renderer.createTexture(MARC_PROJECTILE_URL);
         this.plane = renderer.createMesh(createPlane());
-        this.pyramid = renderer.createMesh(createPyramid());
         this.sphere = renderer.createMesh(createSphere(12, 7));
     }
 
@@ -768,37 +773,25 @@ export class GameplayScene {
             if (enemy.health <= 0) {
                 continue;
             }
-            const toPlayer = sub(this.player.position, enemy.position);
-            const yaw = Math.atan2(toPlayer[0], toPlayer[2]);
             const flash = enemy.hitFlash > 0 ? 1 : 0;
-            const bodyColor: [number, number, number, number] = flash
-                ? [1, 0.95, 0.76, 1]
-                : [0.045, 0.06, 0.075, 1];
-            const coreColor: [number, number, number, number] = flash
-                ? [1, 0.5, 0.18, 1]
-                : [1, 0.05, 0.16, 0.9];
+            const tint: [number, number, number, number] = flash
+                ? [1, 0.76, 0.55, 1]
+                : [1, 1, 1, 1];
             const bob = Math.sin(time * 4.3 + enemy.phase) * 0.08;
-            const position: Vec3 = [enemy.position[0], enemy.position[1] + bob, enemy.position[2]];
-            this.renderer.drawMesh(
-                this.pyramid,
-                fromTRS(position, [Math.PI, yaw, 0.08], [1, 0.78, 1.65]),
-                bodyColor,
-                flash * 1.2,
-                0.65,
-            );
-            this.renderer.drawMesh(
-                this.box,
-                fromTRS(add(position, [0, -0.08, 0]), [0, yaw, 0], [1.25, 0.08, 2.1]),
-                coreColor,
-                1.7 + flash,
-                0.55,
-            );
-            this.renderer.drawMesh(
-                this.sphere,
-                fromTRS(add(position, [0, -0.16, 0]), [0, 0, 0], [0.28, 0.28, 0.28]),
-                coreColor,
-                1.5 + flash,
-                0.55,
+            const pulse = 1 + Math.sin(time * 6.2 + enemy.phase) * 0.035;
+            const position: Vec3 = [
+                enemy.position[0],
+                enemy.position[1] + 0.28 + bob,
+                enemy.position[2],
+            ];
+            this.renderer.drawAnimatedBillboard(
+                this.alienBillboard,
+                time + enemy.phase * 0.11,
+                position,
+                [enemy.radius * 2.45 * pulse, enemy.radius * 3.35 * pulse],
+                tint,
+                Math.sin(time * 5.4 + enemy.phase) * 0.035,
+                true,
             );
         }
     }

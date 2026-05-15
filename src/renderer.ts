@@ -12,6 +12,11 @@ export interface SpriteTexture {
     texture: WebGLTexture;
 }
 
+export interface AnimatedBillboard {
+    frames: SpriteTexture[];
+    frameDuration: number;
+}
+
 interface StarField {
     positionBuffer: WebGLBuffer;
     sizeBuffer: WebGLBuffer;
@@ -179,6 +184,13 @@ export class Renderer {
         image.src = url;
 
         return { texture };
+    }
+
+    createAnimatedBillboard(urls: string[], frameDuration = 0.33): AnimatedBillboard {
+        return {
+            frames: urls.map((url) => this.createTexture(url)),
+            frameDuration,
+        };
     }
 
     createStarField(seed = 73, count = 680): StarField {
@@ -362,6 +374,24 @@ export class Renderer {
         gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
         gl.enable(gl.CULL_FACE);
         gl.depthMask(true);
+    }
+
+    drawAnimatedBillboard(
+        billboard: AnimatedBillboard,
+        time: number,
+        center: Vec3,
+        size: [number, number],
+        color: [number, number, number, number],
+        rotation = 0,
+        opaque = false,
+    ): void {
+        if (billboard.frames.length === 0) {
+            return;
+        }
+        const frameIndex =
+            Math.floor(Math.max(0, time) / Math.max(0.001, billboard.frameDuration)) %
+            billboard.frames.length;
+        this.drawBillboard(billboard.frames[frameIndex], center, size, color, rotation, opaque);
     }
 
     private createArrayBuffer(data: Float32Array): WebGLBuffer {
