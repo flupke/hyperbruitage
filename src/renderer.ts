@@ -38,10 +38,25 @@ interface StarProgram {
     uTime: WebGLUniformLocation;
 }
 
+interface EarthProgram {
+    program: WebGLProgram;
+    aPosition: number;
+    aNormal: number;
+    uProjection: WebGLUniformLocation;
+    uView: WebGLUniformLocation;
+    uModel: WebGLUniformLocation;
+    uCameraPosition: WebGLUniformLocation;
+    uFogColor: WebGLUniformLocation;
+    uFogDensity: WebGLUniformLocation;
+    uSunDirection: WebGLUniformLocation;
+    uTime: WebGLUniformLocation;
+}
+
 export class Renderer {
     private readonly gl: WebGLRenderingContext;
     private readonly meshProgram: MeshProgram;
     private readonly starProgram: StarProgram;
+    private readonly earthProgram: EarthProgram;
     private projection: Mat4 | null = null;
     private view: Mat4 | null = null;
     private cameraPosition: Vec3 = [0, 0, 0];
@@ -61,6 +76,7 @@ export class Renderer {
         this.gl = gl;
         this.meshProgram = this.createMeshProgram();
         this.starProgram = this.createStarProgram();
+        this.earthProgram = this.createEarthProgram();
         gl.enable(gl.DEPTH_TEST);
         gl.enable(gl.CULL_FACE);
         gl.cullFace(gl.BACK);
@@ -212,6 +228,35 @@ export class Renderer {
         gl.depthMask(true);
     }
 
+    drawEarth(mesh: Mesh, model: Mat4, time: number, sunDirection: Vec3, fogDensity = 0.35): void {
+        if (!this.projection || !this.view) {
+            return;
+        }
+
+        const gl = this.gl;
+        const p = this.earthProgram;
+        gl.useProgram(p.program);
+        gl.uniformMatrix4fv(p.uProjection, false, this.projection);
+        gl.uniformMatrix4fv(p.uView, false, this.view);
+        gl.uniformMatrix4fv(p.uModel, false, model);
+        gl.uniform3fv(p.uCameraPosition, this.cameraPosition);
+        gl.uniform3fv(p.uFogColor, this.fogColor);
+        gl.uniform1f(p.uFogDensity, fogDensity);
+        gl.uniform3fv(p.uSunDirection, sunDirection);
+        gl.uniform1f(p.uTime, time);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.positionBuffer);
+        gl.enableVertexAttribArray(p.aPosition);
+        gl.vertexAttribPointer(p.aPosition, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, mesh.normalBuffer);
+        gl.enableVertexAttribArray(p.aNormal);
+        gl.vertexAttribPointer(p.aNormal, 3, gl.FLOAT, false, 0, 0);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
+        gl.drawElements(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_SHORT, 0);
+    }
+
     private createArrayBuffer(data: Float32Array): WebGLBuffer {
         const buffer = this.gl.createBuffer();
         if (!buffer) {
@@ -314,6 +359,168 @@ export class Renderer {
             aSize: this.gl.getAttribLocation(program, "aSize"),
             uProjection: this.mustUniform(program, "uProjection"),
             uView: this.mustUniform(program, "uView"),
+            uTime: this.mustUniform(program, "uTime"),
+        };
+    }
+
+    private createEarthProgram(): EarthProgram {
+        const vertex = `
+      attribute vec3 aPosition;
+      attribute vec3 aNormal;
+      uniform mat4 uProjection;
+      uniform mat4 uView;
+      uniform mat4 uModel;
+      varying vec3 vLocalNormal;
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPosition;
+
+      void main() {
+        vec4 worldPosition = uModel * vec4(aPosition, 1.0);
+        vLocalNormal = normalize(aNormal);
+        vWorldNormal = normalize(mat3(uModel) * aNormal);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = uProjection * uView * worldPosition;
+      }
+    `;
+        const fragment = `
+      #ifdef GL_FRAGMENT_PRECISION_HIGH
+      precision highp float;
+      #else
+      precision mediump float;
+      #endif
+      uniform vec3 uCameraPosition;
+      uniform vec3 uFogColor;
+      uniform vec3 uSunDirection;
+      uniform float uFogDensity;
+      uniform float uTime;
+      varying vec3 vLocalNormal;
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPosition;
+
+      const float PI = 3.14159265359;
+      const float TAU = 6.28318530718;
+
+      float hash(vec2 p) {
+        p = fract(p * vec2(123.34, 345.45));
+        p += dot(p, p + 34.345);
+        return fract(p.x * p.y);
+      }
+
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        vec2 u = f * f * (3.0 - 2.0 * f);
+        return mix(
+          mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+          mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+          u.y
+        );
+      }
+
+      float fbm(vec2 p) {
+        float value = 0.0;
+        float amplitude = 0.52;
+        for (int i = 0; i < 5; i++) {
+          value += noise(p) * amplitude;
+          p = p * 2.03 + vec2(17.13, 9.71);
+          amplitude *= 0.52;
+        }
+        return value;
+      }
+
+      float wrapDistance(float a, float b) {
+        float d = abs(a - b);
+        return min(d, 1.0 - d);
+      }
+
+      float continentBlob(vec2 uv, vec2 center, vec2 radius) {
+        vec2 d = vec2(wrapDistance(uv.x, center.x) / radius.x, (uv.y - center.y) / radius.y);
+        float shape = dot(d, d);
+        return 1.0 - smoothstep(0.72, 1.0, shape);
+      }
+
+      float continentMask(vec2 uv) {
+        float land = 0.0;
+        land = max(land, continentBlob(uv, vec2(0.18, 0.64), vec2(0.16, 0.13)));
+        land = max(land, continentBlob(uv, vec2(0.12, 0.56), vec2(0.09, 0.11)));
+        land = max(land, continentBlob(uv, vec2(0.28, 0.39), vec2(0.07, 0.17)));
+        land = max(land, continentBlob(uv, vec2(0.60, 0.62), vec2(0.22, 0.12)));
+        land = max(land, continentBlob(uv, vec2(0.52, 0.46), vec2(0.09, 0.16)));
+        land = max(land, continentBlob(uv, vec2(0.75, 0.34), vec2(0.08, 0.06)));
+        land = max(land, 1.0 - smoothstep(0.08, 0.13, uv.y));
+        float coastNoise = fbm(uv * vec2(18.0, 9.0)) - 0.48;
+        return smoothstep(0.34, 0.54, land + coastNoise * 0.42);
+      }
+
+      void main() {
+        vec3 localNormal = normalize(vLocalNormal);
+        vec3 normal = normalize(vWorldNormal);
+        vec3 viewDirection = normalize(uCameraPosition - vWorldPosition);
+        vec3 sunDirection = normalize(uSunDirection);
+        float sun = dot(normal, sunDirection);
+        float day = smoothstep(-0.22, 0.18, sun);
+        float latitude = abs(localNormal.y);
+        float longitude = atan(localNormal.z, localNormal.x) / TAU + 0.5;
+        float normalizedLatitude = asin(clamp(localNormal.y, -1.0, 1.0)) / PI + 0.5;
+        vec2 uv = vec2(longitude, normalizedLatitude);
+
+        float land = continentMask(uv);
+        float relief = fbm(uv * vec2(34.0, 17.0) + vec2(2.0, 4.0));
+        float coast = 1.0 - smoothstep(0.08, 0.18, abs(land - 0.5));
+        vec3 deepOcean = vec3(0.015, 0.07, 0.18);
+        vec3 shallowOcean = vec3(0.035, 0.29, 0.44);
+        vec3 ocean = mix(deepOcean, shallowOcean, coast * 0.75 + relief * 0.16);
+        vec3 forest = vec3(0.07, 0.28, 0.12);
+        vec3 grass = vec3(0.22, 0.44, 0.14);
+        vec3 desert = vec3(0.63, 0.48, 0.22);
+        vec3 mountain = vec3(0.56, 0.49, 0.39);
+        float arid = smoothstep(0.05, 0.56, fbm(uv * vec2(10.0, 7.0) + vec2(8.0, 1.0)));
+        float mountainMask = smoothstep(0.64, 0.82, relief);
+        vec3 landColor = mix(forest, grass, smoothstep(0.18, 0.55, relief));
+        landColor = mix(landColor, desert, arid * (1.0 - latitude) * 0.72);
+        landColor = mix(landColor, mountain, mountainMask);
+        float ice = smoothstep(0.68, 0.88, latitude) + (1.0 - smoothstep(0.03, 0.10, normalizedLatitude));
+        landColor = mix(landColor, vec3(0.86, 0.89, 0.82), clamp(ice, 0.0, 1.0));
+        vec3 surface = mix(ocean, landColor, land);
+
+        vec2 cloudUv = uv * vec2(8.0, 4.0) + vec2(uTime * 0.011, sin(uTime * 0.08) * 0.08);
+        float cloudBase = fbm(cloudUv) * 0.72 + fbm(cloudUv * 2.1 + vec2(7.0, 3.0)) * 0.28;
+        float stormBands = smoothstep(0.52, 0.72, sin((uv.y + fbm(uv * 5.0) * 0.12) * 34.0) * 0.5 + 0.5);
+        float clouds = smoothstep(0.58, 0.75, cloudBase + stormBands * 0.16);
+        vec3 cloudColor = vec3(0.92, 0.95, 0.92);
+
+        float night = 1.0 - day;
+        float cityNoise = fbm(uv * vec2(80.0, 35.0));
+        float cityLights = land * night * smoothstep(0.69, 0.81, cityNoise) * (1.0 - ice);
+        vec3 color = mix(surface, cloudColor, clouds * (0.28 + day * 0.55));
+        float diffuse = 0.13 + day * (0.82 + max(sun, 0.0) * 0.25);
+        color *= diffuse;
+        color += vec3(1.0, 0.62, 0.22) * cityLights * 0.75;
+
+        float rim = pow(1.0 - max(dot(normal, viewDirection), 0.0), 2.25);
+        float sunRim = smoothstep(-0.3, 0.55, sun);
+        float terminator = 1.0 - smoothstep(0.0, 0.55, abs(sun));
+        vec3 blueAtmosphere = vec3(0.22, 0.62, 1.0) * rim * (0.36 + sunRim * 1.2);
+        vec3 sunsetAtmosphere = vec3(1.0, 0.34, 0.12) * rim * terminator * 0.58;
+        color += blueAtmosphere + sunsetAtmosphere;
+
+        float distanceFromCamera = length(uCameraPosition - vWorldPosition);
+        float fog = smoothstep(28.0, 120.0, distanceFromCamera * uFogDensity);
+        gl_FragColor = vec4(mix(color, uFogColor, fog), 1.0);
+      }
+    `;
+        const program = this.linkProgram(vertex, fragment);
+        return {
+            program,
+            aPosition: this.gl.getAttribLocation(program, "aPosition"),
+            aNormal: this.gl.getAttribLocation(program, "aNormal"),
+            uProjection: this.mustUniform(program, "uProjection"),
+            uView: this.mustUniform(program, "uView"),
+            uModel: this.mustUniform(program, "uModel"),
+            uCameraPosition: this.mustUniform(program, "uCameraPosition"),
+            uFogColor: this.mustUniform(program, "uFogColor"),
+            uFogDensity: this.mustUniform(program, "uFogDensity"),
+            uSunDirection: this.mustUniform(program, "uSunDirection"),
             uTime: this.mustUniform(program, "uTime"),
         };
     }
