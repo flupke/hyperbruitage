@@ -127,6 +127,14 @@ const GRENADE_GRAVITY = 12.8;
 const GRENADE_RADIUS = 0.34;
 const GRENADE_BLAST_RADIUS = 5.8;
 const PLAYER_RADIUS = 0.48;
+const PLAYER_EYE_HEIGHT = 1.62;
+const PLAYER_GRAVITY = 18.5;
+const PLAYER_JUMP_SPEED = 7.35;
+const PLAYER_DOUBLE_JUMP_SPEED = 6.75;
+const PLAYER_MAX_JUMPS = 2;
+const PLAYER_DASH_SPEED = 21;
+const PLAYER_DASH_DURATION = 0.16;
+const PLAYER_DASH_COOLDOWN = 0.42;
 const ENEMY_RADIUS = 0.72;
 const ENEMY_PROJECTILE_RADIUS = 0.42;
 const ENEMY_PROJECTILE_SPEED = 8.4;
@@ -153,7 +161,7 @@ export class GameplayScene {
     private readonly cacaParticles: CacaParticle[] = [];
     private readonly citySectors = new Map<string, CitySector>();
     private readonly player: Player = {
-        position: [0, 1.62, 3.3],
+        position: [0, PLAYER_EYE_HEIGHT, 3.3],
         yaw: 0,
         pitch: -0.04,
         health: 100,
@@ -172,6 +180,11 @@ export class GameplayScene {
     private levelTransitionTimer = 0;
     private threatLevel = 1;
     private spawnTimer = 0;
+    private playerVerticalVelocity = 0;
+    private jumpsRemaining = PLAYER_MAX_JUMPS;
+    private dashVelocity: Vec3 = [0, 0, 0];
+    private dashTimer = 0;
+    private dashCooldown = 0;
     private active = false;
     private radioLine = "Rampe ouverte. Les envahisseurs convergent vers ta position.";
 
@@ -202,12 +215,13 @@ export class GameplayScene {
         this.shotCooldown = 0;
         this.reloadTimer = 0;
         this.damageFlash = 0;
-        this.player.position = [0, 1.62, 3.3];
+        this.player.position = [0, PLAYER_EYE_HEIGHT, 3.3];
         this.player.yaw = 0;
         this.player.pitch = -0.04;
         this.player.health = 100;
         this.player.ammo = MAX_AMMO;
         this.player.kills = 0;
+        this.resetPlayerMotion();
         this.radioLine = `Niveau ${this.level}: eliminer ${LEVEL_KILL_TARGET} ennemis en une minute.`;
         this.enemies.length = 0;
         this.enemyProjectiles.length = 0;
@@ -297,12 +311,7 @@ export class GameplayScene {
         }
 
         const movement = add(scale(forward, moveForward), scale(right, moveRight));
-        const movementLength = length(movement);
-        if (movementLength > 0.001) {
-            const sprint = this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight");
-            const speed = sprint ? 7.2 : 4.85;
-            this.movePlayer(scale(movement, (speed * dt) / movementLength));
-        }
+        this.updatePlayerMovement(dt, movement, length(movement), forward);
 
         this.shotCooldown = Math.max(0, this.shotCooldown - dt);
         this.reloadTimer = Math.max(0, this.reloadTimer - dt);
@@ -632,11 +641,12 @@ export class GameplayScene {
 
     private respawnPlayer(): void {
         this.player.health = 100;
-        this.player.position = [0, 1.62, 3.3];
+        this.player.position = [0, PLAYER_EYE_HEIGHT, 3.3];
         this.player.yaw = 0;
         this.player.pitch = -0.04;
         this.player.ammo = MAX_AMMO;
         this.reloadTimer = 0;
+        this.resetPlayerMotion();
         this.enemyProjectiles.length = 0;
         this.updateCitySectors();
         this.radioLine = "Armure relancee. Reprends le terrain.";
@@ -696,6 +706,7 @@ export class GameplayScene {
         this.player.health = 100;
         this.player.ammo = MAX_AMMO;
         this.reloadTimer = 0;
+        this.resetPlayerMotion();
         this.enemyProjectiles.length = 0;
         this.grenades.length = 0;
         this.enemies.length = 0;
@@ -809,6 +820,88 @@ export class GameplayScene {
 
     private aliveEnemyCount(): number {
         return this.enemies.filter((enemy) => enemy.health > 0).length;
+    }
+
+    private updatePlayerMovement(
+        dt: number,
+        movement: Vec3,
+        movementLength: number,
+        forward: Vec3,
+    ): void {
+        this.syncGroundedState();
+        this.dashCooldown = Math.max(0, this.dashCooldown - dt);
+
+        if (this.input.consumeKeyPress(["Space", "Backspace"])) {
+            this.jump();
+        }
+
+        if (this.input.consumeSecondaryPress()) {
+            this.startDash(movement, movementLength, forward);
+        }
+
+        if (movementLength > 0.001) {
+            const sprint = this.input.isDown("ShiftLeft") || this.input.isDown("ShiftRight");
+            const speed = sprint ? 7.2 : 4.85;
+            this.movePlayer(scale(movement, (speed * dt) / movementLength));
+        }
+
+        if (this.dashTimer > 0) {
+            const dashStep = Math.min(dt, this.dashTimer);
+            this.movePlayer(scale(this.dashVelocity, dashStep));
+            this.dashTimer -= dt;
+            if (this.dashTimer <= 0) {
+                this.dashVelocity = [0, 0, 0];
+            }
+        }
+
+        this.updatePlayerVertical(dt);
+    }
+
+    private jump(): void {
+        this.syncGroundedState();
+        if (this.jumpsRemaining <= 0) {
+            return;
+        }
+
+        const isDoubleJump = this.jumpsRemaining < PLAYER_MAX_JUMPS;
+        this.playerVerticalVelocity = isDoubleJump ? PLAYER_DOUBLE_JUMP_SPEED : PLAYER_JUMP_SPEED;
+        this.jumpsRemaining -= 1;
+    }
+
+    private startDash(movement: Vec3, movementLength: number, forward: Vec3): void {
+        if (this.dashCooldown > 0) {
+            return;
+        }
+
+        const direction = movementLength > 0.001 ? scale(movement, 1 / movementLength) : forward;
+        this.dashVelocity = scale(direction, PLAYER_DASH_SPEED);
+        this.dashTimer = PLAYER_DASH_DURATION;
+        this.dashCooldown = PLAYER_DASH_COOLDOWN;
+    }
+
+    private updatePlayerVertical(dt: number): void {
+        this.playerVerticalVelocity -= PLAYER_GRAVITY * dt;
+        this.player.position[1] += this.playerVerticalVelocity * dt;
+        this.syncGroundedState();
+    }
+
+    private syncGroundedState(): void {
+        if (this.player.position[1] > PLAYER_EYE_HEIGHT || this.playerVerticalVelocity > 0) {
+            return;
+        }
+
+        this.player.position[1] = PLAYER_EYE_HEIGHT;
+        this.playerVerticalVelocity = 0;
+        this.jumpsRemaining = PLAYER_MAX_JUMPS;
+    }
+
+    private resetPlayerMotion(): void {
+        this.player.position[1] = PLAYER_EYE_HEIGHT;
+        this.playerVerticalVelocity = 0;
+        this.jumpsRemaining = PLAYER_MAX_JUMPS;
+        this.dashVelocity = [0, 0, 0];
+        this.dashTimer = 0;
+        this.dashCooldown = 0;
     }
 
     private maxActiveEnemies(): number {
