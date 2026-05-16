@@ -77,6 +77,16 @@ interface SpriteProgram {
     uOpaque: WebGLUniformLocation;
 }
 
+interface BillboardDrawCommand {
+    texture: SpriteTexture;
+    center: Vec3;
+    size: [number, number];
+    color: [number, number, number, number];
+    rotation: number;
+    opaque: boolean;
+    distanceSquared: number;
+}
+
 export class Renderer {
     private readonly gl: WebGLRenderingContext;
     private readonly meshProgram: MeshProgram;
@@ -87,6 +97,7 @@ export class Renderer {
     private readonly spriteIndexBuffer: WebGLBuffer;
     private projection: Mat4 | null = null;
     private view: Mat4 | null = null;
+    private readonly billboardQueue: BillboardDrawCommand[] = [];
     private cameraPosition: Vec3 = [0, 0, 0];
     private fogColor: Vec3 = [0.03, 0.035, 0.055];
     private lightDirection: Vec3 = [-0.6, -0.45, -0.7];
@@ -224,6 +235,7 @@ export class Renderer {
 
     beginFrame(clearColor: Vec3): void {
         const gl = this.gl;
+        this.billboardQueue.length = 0;
         gl.clearColor(clearColor[0], clearColor[1], clearColor[2], 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     }
@@ -331,7 +343,7 @@ export class Renderer {
         gl.drawElements(gl.TRIANGLES, mesh.indexCount, gl.UNSIGNED_SHORT, 0);
     }
 
-    drawBillboard(
+    private drawBillboardNow(
         texture: SpriteTexture,
         center: Vec3,
         size: [number, number],
@@ -376,7 +388,29 @@ export class Renderer {
         gl.depthMask(true);
     }
 
-    drawAnimatedBillboard(
+    queueBillboard(
+        texture: SpriteTexture,
+        center: Vec3,
+        size: [number, number],
+        color: [number, number, number, number],
+        rotation = 0,
+        opaque = false,
+    ): void {
+        const dx = center[0] - this.cameraPosition[0];
+        const dy = center[1] - this.cameraPosition[1];
+        const dz = center[2] - this.cameraPosition[2];
+        this.billboardQueue.push({
+            texture,
+            center: [center[0], center[1], center[2]],
+            size: [size[0], size[1]],
+            color: [color[0], color[1], color[2], color[3]],
+            rotation,
+            opaque,
+            distanceSquared: dx * dx + dy * dy + dz * dz,
+        });
+    }
+
+    queueAnimatedBillboard(
         billboard: AnimatedBillboard,
         time: number,
         center: Vec3,
@@ -391,7 +425,22 @@ export class Renderer {
         const frameIndex =
             Math.floor(Math.max(0, time) / Math.max(0.001, billboard.frameDuration)) %
             billboard.frames.length;
-        this.drawBillboard(billboard.frames[frameIndex], center, size, color, rotation, opaque);
+        this.queueBillboard(billboard.frames[frameIndex], center, size, color, rotation, opaque);
+    }
+
+    flushBillboards(): void {
+        this.billboardQueue.sort((a, b) => b.distanceSquared - a.distanceSquared);
+        for (const billboard of this.billboardQueue) {
+            this.drawBillboardNow(
+                billboard.texture,
+                billboard.center,
+                billboard.size,
+                billboard.color,
+                billboard.rotation,
+                billboard.opaque,
+            );
+        }
+        this.billboardQueue.length = 0;
     }
 
     private createArrayBuffer(data: Float32Array): WebGLBuffer {

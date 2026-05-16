@@ -261,6 +261,7 @@ export class GameplayScene {
         this.drawEnemies(time);
         this.drawEffects(time);
         this.drawWeapon(time);
+        this.renderer.flushBillboards();
         this.updateHud(time);
         this.drawMinimap(time);
     }
@@ -945,7 +946,7 @@ export class GameplayScene {
                 enemy.position[1] + 0.28 + bob,
                 enemy.position[2],
             ];
-            this.renderer.drawAnimatedBillboard(
+            this.renderer.queueAnimatedBillboard(
                 this.alienBillboard,
                 time + enemy.phase * 0.11,
                 position,
@@ -983,7 +984,7 @@ export class GameplayScene {
             const t = clamp01(particle.age / particle.ttl);
             const alpha = 1 - t;
             const squash = 1 + t * 0.42;
-            this.renderer.drawBillboard(
+            this.renderer.queueBillboard(
                 this.cacaTexture,
                 particle.position,
                 [particle.size * 1.52 * squash, particle.size],
@@ -995,7 +996,7 @@ export class GameplayScene {
 
     private drawGrenade(grenade: Grenade): void {
         const flightPulse = 1 + Math.sin(grenade.age * 18) * 0.05;
-        this.renderer.drawBillboard(
+        this.renderer.queueBillboard(
             this.projectileTexture,
             grenade.position,
             [GRENADE_RADIUS * 2.75 * flightPulse, GRENADE_RADIUS * 2.75],
@@ -1008,7 +1009,7 @@ export class GameplayScene {
     private drawEnemyProjectile(projectile: EnemyProjectile, time: number): void {
         const wobble = Math.sin(time * 8.5 + projectile.phase) * 0.08;
         const pulse = 1 + Math.sin(time * 10.5 + projectile.phase) * 0.06;
-        this.renderer.drawBillboard(
+        this.renderer.queueBillboard(
             this.catProjectileTexture,
             add(projectile.position, [0, wobble, 0]),
             [projectile.radius * 3.1 * pulse, projectile.radius * 3.1 * pulse],
@@ -1049,7 +1050,7 @@ export class GameplayScene {
         if (this.input.isPrimaryDown) {
             const chargePulse = 0.26 + charge * 0.34 + Math.sin(time * 18) * 0.025;
             const heldGrenade = add(add(base, scale(look, 0.9)), scale(right, 0.02));
-            this.renderer.drawBillboard(
+            this.renderer.queueBillboard(
                 this.projectileTexture,
                 heldGrenade,
                 [chargePulse * 2.1, chargePulse * 2.1],
