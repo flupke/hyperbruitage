@@ -60,6 +60,14 @@ export class InputController {
             this.primaryDown = false;
             this.primaryReleases.push((performance.now() - this.primaryStartedAt) / 1000);
         });
+
+        document.addEventListener("pointerlockchange", () => {
+            if (document.pointerLockElement !== this.canvas) {
+                this.clearTransient();
+            }
+        });
+
+        window.addEventListener("blur", () => this.clearTransient());
     }
 
     get locked(): boolean {

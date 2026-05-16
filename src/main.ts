@@ -86,6 +86,11 @@ const enterCombat = () => {
 
 startButton.addEventListener("click", start, { once: true });
 combatButton.addEventListener("click", enterCombat);
+canvas.addEventListener("mousedown", () => {
+    if (mode === "combat" && !input.locked) {
+        input.requestPointerLock();
+    }
+});
 window.addEventListener("keydown", (event) => {
     if (
         mode !== "intro" ||

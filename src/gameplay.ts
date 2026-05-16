@@ -20,6 +20,7 @@ import { InputController } from "./input";
 import {
     add,
     clamp01,
+    cross,
     dot,
     fromTRS,
     length,
@@ -29,6 +30,7 @@ import {
     perspective,
     scale,
     sub,
+    type Mat4,
     type Vec3,
 } from "./math";
 import { Renderer, type AnimatedBillboard, type Mesh, type SpriteTexture } from "./renderer";
@@ -861,20 +863,23 @@ export class GameplayScene {
         const eye = this.eyePosition();
         const look = this.lookDirection();
         const right = this.right();
+        const up = this.cameraUp();
         const bob =
             (Math.sin(time * 9) * 0.015 + Math.sin(time * 4.5) * 0.02) * Number(this.active);
-        const base = add(add(add(eye, scale(look, 0.78)), scale(right, 0.43)), [0, -0.33 + bob, 0]);
-        const rotation: Vec3 = [this.player.pitch - 0.08, this.player.yaw, 0.02];
+        const base = add(
+            add(add(eye, scale(look, 0.78)), scale(right, 0.43)),
+            scale(up, -0.33 + bob),
+        );
         this.renderer.drawMesh(
             this.box,
-            fromTRS(base, rotation, [0.45, 0.28, 1.35]),
+            this.cameraAlignedModel(base, [0.45, 0.28, 1.35]),
             [0.11, 0.12, 0.13, 1],
             0.08,
             0.18,
         );
         this.renderer.drawMesh(
             this.box,
-            fromTRS(add(base, scale(look, 0.44)), rotation, [0.25, 0.2, 0.72]),
+            this.cameraAlignedModel(add(base, scale(look, 0.44)), [0.25, 0.2, 0.72]),
             [0.2, 0.34, 0.16, 1],
             0.45,
             0.18,
@@ -895,7 +900,7 @@ export class GameplayScene {
         } else if (this.shotCooldown > 0.25) {
             this.renderer.drawMesh(
                 this.box,
-                fromTRS(add(muzzle, scale(look, 0.08)), rotation, [0.36, 0.2, 0.38]),
+                this.cameraAlignedModel(add(muzzle, scale(look, 0.08)), [0.36, 0.2, 0.38]),
                 [0.68, 0.95, 0.38, 0.46],
                 1.2,
                 0.12,
@@ -1107,11 +1112,39 @@ export class GameplayScene {
         return normalize([Math.cos(this.player.yaw), 0, Math.sin(this.player.yaw)]);
     }
 
+    private cameraUp(): Vec3 {
+        return normalize(cross(this.right(), this.lookDirection()));
+    }
+
+    private cameraAlignedModel(position: Vec3, size: Vec3): Mat4 {
+        const right = this.right();
+        const up = this.cameraUp();
+        const backward = scale(this.lookDirection(), -1);
+        return new Float32Array([
+            right[0] * size[0],
+            right[1] * size[0],
+            right[2] * size[0],
+            0,
+            up[0] * size[1],
+            up[1] * size[1],
+            up[2] * size[1],
+            0,
+            backward[0] * size[2],
+            backward[1] * size[2],
+            backward[2] * size[2],
+            0,
+            position[0],
+            position[1],
+            position[2],
+            1,
+        ]);
+    }
+
     private weaponMuzzle(): Vec3 {
         const eye = this.eyePosition();
         return add(
             add(add(eye, scale(this.lookDirection(), 1.26)), scale(this.right(), 0.44)),
-            [0, -0.27, 0],
+            scale(this.cameraUp(), -0.27),
         );
     }
 }
