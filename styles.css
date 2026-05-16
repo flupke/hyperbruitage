@@ -249,6 +249,58 @@ button {
     color: var(--muted);
 }
 
+.objective-meter {
+    position: absolute;
+    top: clamp(56px, 8.6vh, 88px);
+    left: 50%;
+    z-index: 4;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(118px, 1fr));
+    gap: 8px;
+    width: min(380px, calc(100vw - 560px));
+    min-width: 292px;
+    transform: translateX(-50%);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+        opacity 180ms ease,
+        visibility 180ms ease;
+}
+
+.helmet-ui.combat-ready .objective-meter {
+    opacity: 1;
+    visibility: visible;
+}
+
+.objective-meter div {
+    display: grid;
+    gap: 4px;
+    min-height: 64px;
+    padding: 8px 12px 10px;
+    border: 2px solid rgba(255, 176, 0, 0.44);
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.68);
+    box-shadow: inset 0 0 18px rgba(255, 49, 88, 0.08);
+}
+
+.objective-meter span {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 900;
+    line-height: 1;
+    text-transform: uppercase;
+}
+
+.objective-meter strong {
+    color: var(--ink);
+    font-size: clamp(1.8rem, 4.2vw, 3rem);
+    font-weight: 900;
+    line-height: 0.92;
+    text-shadow:
+        2px 0 0 rgba(255, 49, 88, 0.48),
+        -2px 0 0 rgba(84, 229, 255, 0.32);
+}
+
 .radio-panel {
     position: absolute;
     right: clamp(14px, 3vw, 44px);
@@ -371,6 +423,24 @@ button {
     .status-strip span {
         min-height: 24px;
         padding: 7px 9px;
+    }
+
+    .objective-meter {
+        top: 126px;
+        left: 14px;
+        grid-template-columns: repeat(2, minmax(72px, 1fr));
+        width: calc(100vw - 186px);
+        min-width: 0;
+        transform: none;
+    }
+
+    .objective-meter div {
+        min-height: 52px;
+        padding: 7px 8px;
+    }
+
+    .objective-meter strong {
+        font-size: clamp(1.35rem, 7vw, 2.1rem);
     }
 
     .radio-panel,

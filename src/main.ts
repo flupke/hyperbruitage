@@ -17,6 +17,8 @@ const altitude = document.getElementById("altitude-label");
 const signal = document.getElementById("signal-label");
 const mission = document.getElementById("mission-text");
 const minimap = document.getElementById("mini-map") as HTMLCanvasElement | null;
+const objectiveTimer = document.getElementById("objective-timer");
+const objectiveRemaining = document.getElementById("objective-remaining");
 
 if (
     !canvas ||
@@ -31,7 +33,9 @@ if (
     !altitude ||
     !signal ||
     !mission ||
-    !minimap
+    !minimap ||
+    !objectiveTimer ||
+    !objectiveRemaining
 ) {
     throw new Error("Interface Hyperbruitage incomplete.");
 }
@@ -39,7 +43,18 @@ if (
 const renderer = new Renderer(canvas);
 const audio = new AudioFX();
 const input = new InputController(canvas);
-const hud = { helmet, radioMessage, phase, velocity, altitude, signal, mission, minimap };
+const hud = {
+    helmet,
+    radioMessage,
+    phase,
+    velocity,
+    altitude,
+    signal,
+    mission,
+    minimap,
+    objectiveTimer,
+    objectiveRemaining,
+};
 const intro = new IntroSequence(renderer, hud, audio);
 const gameplay = new GameplayScene(renderer, hud, input, audio);
 

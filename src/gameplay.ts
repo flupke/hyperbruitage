@@ -11,7 +11,6 @@ import {
     nearestStreetPoint,
     resolveCircleAgainstBuildings,
     sectorKey,
-    worldToSector,
     type Building,
     type CitySector,
 } from "./city";
@@ -52,6 +51,8 @@ interface HudElements {
     signal: HTMLElement;
     mission: HTMLElement;
     minimap: HTMLCanvasElement;
+    objectiveTimer: HTMLElement;
+    objectiveRemaining: HTMLElement;
 }
 
 interface Player {
@@ -110,7 +111,12 @@ interface CacaParticle {
     spin: number;
 }
 
+type LevelState = "running" | "won" | "lost";
+
 const MAX_AMMO = 12;
+const LEVEL_KILL_TARGET = 10;
+const LEVEL_DURATION = 60;
+const LEVEL_TRANSITION_DELAY = 2.4;
 const MAX_GRENADE_CHARGE = 1.45;
 const MIN_GRENADE_SPEED = 10;
 const MAX_GRENADE_SPEED = 29;
@@ -153,6 +159,11 @@ export class GameplayScene {
     private shotCooldown = 0;
     private reloadTimer = 0;
     private damageFlash = 0;
+    private level = 1;
+    private levelKills = 0;
+    private levelState: LevelState = "running";
+    private levelTimeRemaining = LEVEL_DURATION;
+    private levelTransitionTimer = 0;
     private threatLevel = 1;
     private spawnTimer = 0;
     private active = false;
@@ -177,6 +188,8 @@ export class GameplayScene {
         this.startedAt = now;
         this.lastFrame = now;
         this.active = false;
+        this.level = 1;
+        this.resetLevelState();
         this.threatLevel = 1;
         this.spawnTimer = 0.4;
         this.shotCooldown = 0;
@@ -188,6 +201,7 @@ export class GameplayScene {
         this.player.health = 100;
         this.player.ammo = MAX_AMMO;
         this.player.kills = 0;
+        this.radioLine = `Niveau ${this.level}: eliminer ${LEVEL_KILL_TARGET} ennemis en une minute.`;
         this.enemies.length = 0;
         this.beams.length = 0;
         this.grenades.length = 0;
@@ -258,6 +272,21 @@ export class GameplayScene {
             Number(this.input.isDown("KeyD") || this.input.isDown("ArrowRight")) -
             Number(this.input.isDown("KeyA") || this.input.isDown("ArrowLeft"));
         this.updateCitySectors();
+
+        if (this.levelState !== "running") {
+            this.updateLevelTransition(dt);
+            this.updateEffects(dt);
+            this.damageFlash = Math.max(0, this.damageFlash - dt * 2.6);
+            return;
+        }
+
+        this.levelTimeRemaining = Math.max(0, this.levelTimeRemaining - dt);
+        if (this.levelTimeRemaining === 0) {
+            this.failLevel();
+            this.updateEffects(dt);
+            this.damageFlash = Math.max(0, this.damageFlash - dt * 2.6);
+            return;
+        }
 
         const movement = add(scale(forward, moveForward), scale(right, moveRight));
         const movementLength = length(movement);
@@ -477,7 +506,7 @@ export class GameplayScene {
             enemy.health -= damage;
             enemy.hitFlash = 0.24;
             if (enemy.health <= 0) {
-                this.player.kills += 1;
+                this.registerEnemyKill();
             }
         }
 
@@ -549,6 +578,67 @@ export class GameplayScene {
         this.updateCitySectors();
         this.radioLine = "Armure relancee. Reprends le terrain.";
         this.explosions.push({ position: [0, 1.2, 3.3], age: 0, ttl: 0.8, size: 1.7 });
+    }
+
+    private resetLevelState(): void {
+        this.levelKills = 0;
+        this.levelState = "running";
+        this.levelTimeRemaining = LEVEL_DURATION;
+        this.levelTransitionTimer = 0;
+    }
+
+    private registerEnemyKill(): void {
+        this.player.kills += 1;
+        if (this.levelState !== "running") {
+            return;
+        }
+        this.levelKills += 1;
+        if (this.levelKills >= LEVEL_KILL_TARGET) {
+            this.completeLevel();
+        }
+    }
+
+    private completeLevel(): void {
+        this.levelState = "won";
+        this.levelTransitionTimer = LEVEL_TRANSITION_DELAY;
+        this.input.clearTransient();
+        this.radioLine = `Niveau ${this.level} nettoye. Extraction vers secteur suivant.`;
+        this.audio.transmissionTick();
+    }
+
+    private failLevel(): void {
+        this.levelState = "lost";
+        this.levelTransitionTimer = LEVEL_TRANSITION_DELAY;
+        this.input.clearTransient();
+        this.radioLine = `Chronometre expire. Reprise du niveau ${this.level}.`;
+        this.audio.transmissionTick();
+    }
+
+    private updateLevelTransition(dt: number): void {
+        this.levelTransitionTimer -= dt;
+        if (this.levelTransitionTimer > 0) {
+            return;
+        }
+        if (this.levelState === "won") {
+            this.level += 1;
+        }
+        this.restartLevel();
+    }
+
+    private restartLevel(): void {
+        this.resetLevelState();
+        this.spawnTimer = 0.35;
+        this.player.health = 100;
+        this.player.ammo = MAX_AMMO;
+        this.reloadTimer = 0;
+        this.beams.length = 0;
+        this.grenades.length = 0;
+        this.enemies.length = 0;
+        for (let index = 0; index < 5; index += 1) {
+            this.spawnEnemy(0);
+        }
+        this.radioLine = `Niveau ${this.level}: eliminer ${LEVEL_KILL_TARGET} ennemis en une minute.`;
+        this.audio.transmissionTick();
     }
 
     private updateCitySectors(): void {
@@ -1060,24 +1150,37 @@ export class GameplayScene {
     private updateHud(time: number): void {
         this.hud.helmet.classList.toggle(
             "alarm",
-            this.damageFlash > 0.35 || this.player.health <= 28,
+            this.damageFlash > 0.35 || this.player.health <= 28 || this.levelTimeRemaining <= 10,
         );
-        const [sectorX, sectorZ] = worldToSector(this.player.position);
-        this.hud.phase.textContent = `VILLE ${sectorX}:${sectorZ}`;
+        this.hud.phase.textContent = `NIVEAU ${this.level}`;
         this.hud.velocity.textContent = `ARMURE ${Math.round(this.player.health)}%`;
         const charge = this.grenadeCharge();
-        const ammoText = this.reloadTimer > 0 ? "RECHARGE" : `${this.player.ammo}/${MAX_AMMO}`;
-        this.hud.altitude.textContent = `MUN ${ammoText}`;
+        const timerText = this.levelTimerText();
+        const remainingKills = Math.max(0, LEVEL_KILL_TARGET - this.levelKills);
+        this.hud.altitude.textContent = `TEMPS ${timerText}`;
+        this.hud.objectiveTimer.textContent = timerText;
+        this.hud.objectiveRemaining.textContent = String(remainingKills);
         const aliveEnemies = this.aliveEnemyCount();
-        this.hud.signal.textContent = `MENACES ${aliveEnemies}/${this.maxActiveEnemies()}`;
-        this.hud.mission.textContent = this.input.isPrimaryDown
-            ? `Charge grenade ${Math.round(charge * 100)}%`
-            : aliveEnemies > 0
-              ? `Survivre menace ${this.threatLevel}`
-              : "Reperer les rues";
+        this.hud.signal.textContent = `ELIMS ${this.levelKills}/${LEVEL_KILL_TARGET}`;
+        if (this.levelState === "won") {
+            this.hud.mission.textContent = "Niveau nettoye";
+        } else if (this.levelState === "lost") {
+            this.hud.mission.textContent = "Temps ecoule";
+        } else {
+            const ammoText =
+                this.reloadTimer > 0 ? "RECHARGE" : `MUN ${this.player.ammo}/${MAX_AMMO}`;
+            this.hud.mission.textContent = this.input.isPrimaryDown
+                ? `Charge grenade ${Math.round(charge * 100)}%`
+                : `${ammoText} - menaces ${aliveEnemies}`;
+        }
         const text = this.radioLine;
         const visibleChars = Math.min(text.length, Math.floor((time * 18) % (text.length + 16)));
         this.hud.radioMessage.textContent = text.slice(0, visibleChars);
+    }
+
+    private levelTimerText(): string {
+        const seconds = Math.ceil(this.levelTimeRemaining);
+        return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
     }
 
     private grenadeCharge(): number {
