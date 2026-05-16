@@ -16,6 +16,7 @@ const velocity = document.getElementById("velocity-label");
 const altitude = document.getElementById("altitude-label");
 const signal = document.getElementById("signal-label");
 const mission = document.getElementById("mission-text");
+const minimap = document.getElementById("mini-map") as HTMLCanvasElement | null;
 
 if (
     !canvas ||
@@ -29,7 +30,8 @@ if (
     !velocity ||
     !altitude ||
     !signal ||
-    !mission
+    !mission ||
+    !minimap
 ) {
     throw new Error("Interface Hyperbruitage incomplete.");
 }
@@ -37,7 +39,7 @@ if (
 const renderer = new Renderer(canvas);
 const audio = new AudioFX();
 const input = new InputController(canvas);
-const hud = { helmet, radioMessage, phase, velocity, altitude, signal, mission };
+const hud = { helmet, radioMessage, phase, velocity, altitude, signal, mission, minimap };
 const intro = new IntroSequence(renderer, hud, audio);
 const gameplay = new GameplayScene(renderer, hud, input, audio);
 
@@ -69,12 +71,14 @@ const start = () => {
     mode = "intro";
     audio.start();
     boot.classList.add("hidden");
+    helmet.classList.remove("combat-ready");
     intro.start(performance.now());
 };
 
 const enterCombat = () => {
     mode = "combat";
     combatPrompt.classList.remove("active");
+    helmet.classList.add("combat-ready");
     audio.start();
     gameplay.engage(performance.now());
     input.requestPointerLock();

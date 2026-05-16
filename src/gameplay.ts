@@ -49,6 +49,7 @@ interface HudElements {
     altitude: HTMLElement;
     signal: HTMLElement;
     mission: HTMLElement;
+    minimap: HTMLCanvasElement;
 }
 
 interface Player {
@@ -121,11 +122,13 @@ const CITY_KEEP_RADIUS = ACTIVE_SECTOR_RADIUS + 1;
 const ENEMY_SPAWN_MIN_DISTANCE = 34;
 const ENEMY_SPAWN_MAX_DISTANCE = 78;
 const ENEMY_DESPAWN_DISTANCE = CITY_SECTOR_SIZE * 3.35;
+const MINIMAP_RANGE = 76;
 
 export class GameplayScene {
     private readonly box: Mesh;
     private readonly alienBillboard: AnimatedBillboard;
     private readonly cacaTexture: SpriteTexture;
+    private readonly minimapContext: CanvasRenderingContext2D | null;
     private readonly projectileTexture: SpriteTexture;
     private readonly plane: Mesh;
     private readonly sphere: Mesh;
@@ -162,6 +165,7 @@ export class GameplayScene {
         this.box = renderer.createMesh(createBox());
         this.alienBillboard = renderer.createAnimatedBillboard(ALIEN_TEXTURE_URLS);
         this.cacaTexture = renderer.createTexture(CACA_PARTICLE_URL);
+        this.minimapContext = hud.minimap.getContext("2d");
         this.projectileTexture = renderer.createTexture(MARC_PROJECTILE_URL);
         this.plane = renderer.createMesh(createPlane());
         this.sphere = renderer.createMesh(createSphere(12, 7));
@@ -235,6 +239,7 @@ export class GameplayScene {
         this.drawEffects(time);
         this.drawWeapon(time);
         this.updateHud(time);
+        this.drawMinimap(time);
     }
 
     private update(dt: number, time: number): void {
@@ -918,6 +923,133 @@ export class GameplayScene {
             emissive,
             0.2,
         );
+    }
+
+    private drawMinimap(time: number): void {
+        const context = this.minimapContext;
+        const canvas = this.hud.minimap;
+        if (!context) {
+            return;
+        }
+
+        const width = Math.max(1, canvas.clientWidth);
+        const height = Math.max(1, canvas.clientHeight);
+        const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+        const targetWidth = Math.floor(width * pixelRatio);
+        const targetHeight = Math.floor(height * pixelRatio);
+        if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+        }
+
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        context.clearRect(0, 0, width, height);
+
+        const size = Math.min(width, height);
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const scale2d = size / (MINIMAP_RANGE * 2);
+        const yaw = this.player.yaw;
+        const cosYaw = Math.cos(yaw);
+        const sinYaw = Math.sin(yaw);
+        const toMap = (x: number, z: number): [number, number] => {
+            const dx = x - this.player.position[0];
+            const dz = z - this.player.position[2];
+            return [
+                centerX + (dx * cosYaw + dz * sinYaw) * scale2d,
+                centerY + (-dx * sinYaw + dz * cosYaw) * scale2d,
+            ];
+        };
+
+        context.save();
+        context.beginPath();
+        context.rect((width - size) / 2, (height - size) / 2, size, size);
+        context.clip();
+
+        context.fillStyle = "rgba(2, 4, 7, 0.86)";
+        context.fillRect(0, 0, width, height);
+        context.strokeStyle = "rgba(84, 229, 255, 0.12)";
+        context.lineWidth = 1;
+        for (let offset = -MINIMAP_RANGE; offset <= MINIMAP_RANGE; offset += CITY_BLOCK_SIZE) {
+            context.beginPath();
+            context.moveTo(centerX - size / 2, centerY + offset * scale2d);
+            context.lineTo(centerX + size / 2, centerY + offset * scale2d);
+            context.moveTo(centerX + offset * scale2d, centerY - size / 2);
+            context.lineTo(centerX + offset * scale2d, centerY + size / 2);
+            context.stroke();
+        }
+
+        for (const building of this.cityBuildings()) {
+            const centerBuildingX = (building.bounds.minX + building.bounds.maxX) / 2;
+            const centerBuildingZ = (building.bounds.minZ + building.bounds.maxZ) / 2;
+            const distance = Math.hypot(
+                centerBuildingX - this.player.position[0],
+                centerBuildingZ - this.player.position[2],
+            );
+            if (distance > MINIMAP_RANGE + CITY_BLOCK_SIZE) {
+                continue;
+            }
+
+            const corners = [
+                toMap(building.bounds.minX, building.bounds.minZ),
+                toMap(building.bounds.maxX, building.bounds.minZ),
+                toMap(building.bounds.maxX, building.bounds.maxZ),
+                toMap(building.bounds.minX, building.bounds.maxZ),
+            ];
+            const alpha = Math.min(0.82, 0.38 + building.height / 28);
+            context.beginPath();
+            context.moveTo(corners[0][0], corners[0][1]);
+            for (let index = 1; index < corners.length; index += 1) {
+                context.lineTo(corners[index][0], corners[index][1]);
+            }
+            context.closePath();
+            context.fillStyle = `rgba(126, 140, 150, ${alpha})`;
+            context.fill();
+            context.strokeStyle = "rgba(247, 241, 213, 0.12)";
+            context.stroke();
+        }
+
+        context.fillStyle = "rgba(84, 229, 255, 0.12)";
+        context.beginPath();
+        context.moveTo(centerX, centerY - 24);
+        context.lineTo(centerX + 12, centerY - 3);
+        context.lineTo(centerX - 12, centerY - 3);
+        context.closePath();
+        context.fill();
+
+        for (const enemy of this.enemies) {
+            if (enemy.health <= 0) {
+                continue;
+            }
+            const distance = Math.hypot(
+                enemy.position[0] - this.player.position[0],
+                enemy.position[2] - this.player.position[2],
+            );
+            if (distance > MINIMAP_RANGE) {
+                continue;
+            }
+            const [enemyX, enemyY] = toMap(enemy.position[0], enemy.position[2]);
+            const pulse = 1 + Math.sin(time * 8 + enemy.phase) * 0.25;
+            context.beginPath();
+            context.arc(enemyX, enemyY, 3.4 * pulse, 0, Math.PI * 2);
+            context.fillStyle = "rgba(255, 49, 88, 0.96)";
+            context.fill();
+            context.strokeStyle = "rgba(255, 176, 0, 0.72)";
+            context.stroke();
+        }
+
+        context.beginPath();
+        context.moveTo(centerX, centerY - 5);
+        context.lineTo(centerX + 4, centerY + 5);
+        context.lineTo(centerX, centerY + 2);
+        context.lineTo(centerX - 4, centerY + 5);
+        context.closePath();
+        context.fillStyle = "rgba(84, 229, 255, 1)";
+        context.fill();
+        context.strokeStyle = "rgba(247, 241, 213, 0.8)";
+        context.stroke();
+
+        context.restore();
     }
 
     private updateHud(time: number): void {
