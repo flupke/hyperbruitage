@@ -35,6 +35,7 @@ import {
 import { Renderer, type AnimatedBillboard, type Mesh, type SpriteTexture } from "./renderer";
 
 const CACA_PARTICLE_URL = new URL("./images/caca.png", import.meta.url).href;
+const CAT_HEAD_URL = new URL("./images/cat-head.png", import.meta.url).href;
 const MARC_PROJECTILE_URL = new URL("./images/marc.png", import.meta.url).href;
 const ALIEN_TEXTURE_URLS = [
     new URL("./images/alien-01.png", import.meta.url).href,
@@ -75,16 +76,6 @@ interface Enemy {
     pathTimer: number;
 }
 
-interface Beam {
-    from: Vec3;
-    to: Vec3;
-    age: number;
-    ttl: number;
-    width: number;
-    color: [number, number, number, number];
-    emissive: number;
-}
-
 interface Grenade {
     position: Vec3;
     previousPosition: Vec3;
@@ -92,6 +83,18 @@ interface Grenade {
     age: number;
     ttl: number;
     spin: number;
+}
+
+interface EnemyProjectile {
+    position: Vec3;
+    previousPosition: Vec3;
+    velocity: Vec3;
+    age: number;
+    ttl: number;
+    radius: number;
+    rotation: number;
+    spin: number;
+    phase: number;
 }
 
 interface Explosion {
@@ -125,6 +128,8 @@ const GRENADE_RADIUS = 0.34;
 const GRENADE_BLAST_RADIUS = 5.8;
 const PLAYER_RADIUS = 0.48;
 const ENEMY_RADIUS = 0.72;
+const ENEMY_PROJECTILE_RADIUS = 0.42;
+const ENEMY_PROJECTILE_SPEED = 8.4;
 const ACTIVE_SECTOR_RADIUS = 2;
 const CITY_KEEP_RADIUS = ACTIVE_SECTOR_RADIUS + 1;
 const ENEMY_SPAWN_MIN_DISTANCE = 34;
@@ -136,12 +141,13 @@ export class GameplayScene {
     private readonly box: Mesh;
     private readonly alienBillboard: AnimatedBillboard;
     private readonly cacaTexture: SpriteTexture;
+    private readonly catProjectileTexture: SpriteTexture;
     private readonly minimapContext: CanvasRenderingContext2D | null;
     private readonly projectileTexture: SpriteTexture;
     private readonly plane: Mesh;
     private readonly sphere: Mesh;
     private readonly enemies: Enemy[] = [];
-    private readonly beams: Beam[] = [];
+    private readonly enemyProjectiles: EnemyProjectile[] = [];
     private readonly grenades: Grenade[] = [];
     private readonly explosions: Explosion[] = [];
     private readonly cacaParticles: CacaParticle[] = [];
@@ -178,6 +184,7 @@ export class GameplayScene {
         this.box = renderer.createMesh(createBox());
         this.alienBillboard = renderer.createAnimatedBillboard(ALIEN_TEXTURE_URLS);
         this.cacaTexture = renderer.createTexture(CACA_PARTICLE_URL);
+        this.catProjectileTexture = renderer.createTexture(CAT_HEAD_URL);
         this.minimapContext = hud.minimap.getContext("2d");
         this.projectileTexture = renderer.createTexture(MARC_PROJECTILE_URL);
         this.plane = renderer.createMesh(createPlane());
@@ -203,7 +210,7 @@ export class GameplayScene {
         this.player.kills = 0;
         this.radioLine = `Niveau ${this.level}: eliminer ${LEVEL_KILL_TARGET} ennemis en une minute.`;
         this.enemies.length = 0;
-        this.beams.length = 0;
+        this.enemyProjectiles.length = 0;
         this.grenades.length = 0;
         this.explosions.length = 0;
         this.cacaParticles.length = 0;
@@ -319,6 +326,7 @@ export class GameplayScene {
         this.updateSpawning(dt, time);
         this.updateEnemies(dt, time);
         this.updateGrenades(dt);
+        this.updateEnemyProjectiles(dt);
         this.removeDeadEnemies();
         this.updateEffects(dt);
         this.damageFlash = Math.max(0, this.damageFlash - dt * 2.6);
@@ -411,32 +419,28 @@ export class GameplayScene {
             enemy.cooldown -= dt;
             if (enemy.cooldown <= 0 && distance < 28 && !lineBlocked) {
                 enemy.cooldown =
-                    1.15 + Math.random() * 1.2 - Math.min(0.42, this.threatLevel * 0.035);
+                    1.45 + Math.random() * 1.35 - Math.min(0.34, this.threatLevel * 0.03);
                 this.enemyFire(enemy);
             }
         }
     }
 
     private enemyFire(enemy: Enemy): void {
-        const from = add(enemy.position, [0, 0.08, 0]);
-        const to = this.eyePosition();
-        this.beams.push({
-            from,
-            to,
+        const from = add(enemy.position, [0, 0.26, 0]);
+        const target = add(this.eyePosition(), [0, -0.18, 0]);
+        const direction = normalize(sub(target, from));
+        const speed = ENEMY_PROJECTILE_SPEED + Math.min(2.2, this.threatLevel * 0.22);
+        this.enemyProjectiles.push({
+            position: from,
+            previousPosition: from,
+            velocity: scale(direction, speed),
             age: 0,
-            ttl: 0.16,
-            width: 0.045,
-            color: [1, 0.08, 0.18, 0.68],
-            emissive: 2.2,
+            ttl: 5.4,
+            radius: ENEMY_PROJECTILE_RADIUS,
+            rotation: Math.random() * Math.PI * 2,
+            spin: (Math.random() > 0.5 ? 1 : -1) * (2.8 + Math.random() * 1.8),
+            phase: Math.random() * Math.PI * 2,
         });
-
-        const damage = 4 + Math.min(8, this.threatLevel);
-        this.player.health = Math.max(0, this.player.health - damage);
-        this.damageFlash = 1;
-        this.audio.playerHit();
-        if (this.player.health === 0) {
-            this.respawnPlayer();
-        }
     }
 
     private updateGrenades(dt: number): void {
@@ -476,6 +480,70 @@ export class GameplayScene {
                 this.grenades.splice(index, 1);
             }
         }
+    }
+
+    private updateEnemyProjectiles(dt: number): void {
+        const buildings = this.cityBuildings();
+        for (let index = this.enemyProjectiles.length - 1; index >= 0; index -= 1) {
+            const projectile = this.enemyProjectiles[index];
+            if (!projectile) {
+                continue;
+            }
+            projectile.age += dt;
+            projectile.previousPosition = projectile.position;
+            projectile.position = add(projectile.position, scale(projectile.velocity, dt));
+            projectile.rotation += projectile.spin * dt;
+
+            const hitBuilding = isLineBlockedByBuildings(
+                projectile.previousPosition,
+                projectile.position,
+                buildings.filter(
+                    (building) =>
+                        Math.min(projectile.previousPosition[1], projectile.position[1]) <=
+                        building.height + projectile.radius,
+                ),
+                projectile.radius,
+            );
+            const hitPlayer =
+                this.distanceToSegment(
+                    this.eyePosition(),
+                    projectile.previousPosition,
+                    projectile.position,
+                ) <=
+                PLAYER_RADIUS + projectile.radius;
+
+            if (hitPlayer) {
+                this.enemyProjectiles.splice(index, 1);
+                if (this.hitPlayerWithEnemyProjectile()) {
+                    break;
+                }
+                continue;
+            }
+
+            if (hitBuilding || projectile.age >= projectile.ttl) {
+                if (hitBuilding) {
+                    this.explosions.push({
+                        position: projectile.position,
+                        age: 0,
+                        ttl: 0.26,
+                        size: 0.56,
+                    });
+                }
+                this.enemyProjectiles.splice(index, 1);
+            }
+        }
+    }
+
+    private hitPlayerWithEnemyProjectile(): boolean {
+        const damage = 7 + Math.min(7, this.threatLevel);
+        this.player.health = Math.max(0, this.player.health - damage);
+        this.damageFlash = 1;
+        this.audio.playerHit();
+        if (this.player.health === 0) {
+            this.respawnPlayer();
+            return true;
+        }
+        return false;
     }
 
     private explodeGrenade(position: Vec3): void {
@@ -536,13 +604,6 @@ export class GameplayScene {
     }
 
     private updateEffects(dt: number): void {
-        for (let index = this.beams.length - 1; index >= 0; index -= 1) {
-            this.beams[index].age += dt;
-            if (this.beams[index].age >= this.beams[index].ttl) {
-                this.beams.splice(index, 1);
-            }
-        }
-
         for (let index = this.explosions.length - 1; index >= 0; index -= 1) {
             this.explosions[index].age += dt;
             if (this.explosions[index].age >= this.explosions[index].ttl) {
@@ -575,6 +636,7 @@ export class GameplayScene {
         this.player.pitch = -0.04;
         this.player.ammo = MAX_AMMO;
         this.reloadTimer = 0;
+        this.enemyProjectiles.length = 0;
         this.updateCitySectors();
         this.radioLine = "Armure relancee. Reprends le terrain.";
         this.explosions.push({ position: [0, 1.2, 3.3], age: 0, ttl: 0.8, size: 1.7 });
@@ -601,6 +663,7 @@ export class GameplayScene {
     private completeLevel(): void {
         this.levelState = "won";
         this.levelTransitionTimer = LEVEL_TRANSITION_DELAY;
+        this.enemyProjectiles.length = 0;
         this.input.clearTransient();
         this.radioLine = `Niveau ${this.level} nettoye. Extraction vers secteur suivant.`;
         this.audio.transmissionTick();
@@ -609,6 +672,7 @@ export class GameplayScene {
     private failLevel(): void {
         this.levelState = "lost";
         this.levelTransitionTimer = LEVEL_TRANSITION_DELAY;
+        this.enemyProjectiles.length = 0;
         this.input.clearTransient();
         this.radioLine = `Chronometre expire. Reprise du niveau ${this.level}.`;
         this.audio.transmissionTick();
@@ -631,7 +695,7 @@ export class GameplayScene {
         this.player.health = 100;
         this.player.ammo = MAX_AMMO;
         this.reloadTimer = 0;
-        this.beams.length = 0;
+        this.enemyProjectiles.length = 0;
         this.grenades.length = 0;
         this.enemies.length = 0;
         for (let index = 0; index < 5; index += 1) {
@@ -898,15 +962,8 @@ export class GameplayScene {
             this.drawGrenade(grenade);
         }
 
-        for (const beam of this.beams) {
-            const fade = 1 - beam.age / beam.ttl;
-            this.drawAlienBeam(
-                beam.from,
-                beam.to,
-                beam.width * (0.55 + fade),
-                [beam.color[0], beam.color[1], beam.color[2], beam.color[3] * fade],
-                beam.emissive,
-            );
+        for (const projectile of this.enemyProjectiles) {
+            this.drawEnemyProjectile(projectile, time);
         }
 
         for (const explosion of this.explosions) {
@@ -944,6 +1001,19 @@ export class GameplayScene {
             [GRENADE_RADIUS * 2.75 * flightPulse, GRENADE_RADIUS * 2.75],
             [1, 1, 1, 1],
             grenade.spin,
+            true,
+        );
+    }
+
+    private drawEnemyProjectile(projectile: EnemyProjectile, time: number): void {
+        const wobble = Math.sin(time * 8.5 + projectile.phase) * 0.08;
+        const pulse = 1 + Math.sin(time * 10.5 + projectile.phase) * 0.06;
+        this.renderer.drawBillboard(
+            this.catProjectileTexture,
+            add(projectile.position, [0, wobble, 0]),
+            [projectile.radius * 3.1 * pulse, projectile.radius * 3.1 * pulse],
+            [1, 0.96, 0.84, 1],
+            projectile.rotation,
             true,
         );
     }
@@ -996,28 +1066,6 @@ export class GameplayScene {
                 0.12,
             );
         }
-    }
-
-    private drawAlienBeam(
-        from: Vec3,
-        to: Vec3,
-        width: number,
-        color: [number, number, number, number],
-        emissive: number,
-    ): void {
-        const delta = sub(to, from);
-        const distance = Math.max(0.001, length(delta));
-        const center = add(from, scale(delta, 0.5));
-        const yaw = Math.atan2(delta[0], delta[2]);
-        const horizontal = Math.hypot(delta[0], delta[2]);
-        const pitch = -Math.atan2(delta[1], horizontal);
-        this.renderer.drawMesh(
-            this.box,
-            fromTRS(center, [pitch, yaw, 0], [width, width, distance]),
-            color,
-            emissive,
-            0.2,
-        );
     }
 
     private drawMinimap(time: number): void {
